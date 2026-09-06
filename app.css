@@ -27,9 +27,13 @@ input, select { font-family: inherit; font-size: 1rem; }
 #app { display: flex; flex-direction: column; height: 100%; height: 100dvh; }
 
 /* ---------- Header ---------- */
+/* Web build: extra top clearance (14px -> 44px) so the ⋮ button stays below
+   an iPhone's ongoing-call banner. iOS does not resize the page for that
+   banner on a Home-Screen web app the way it does inside Safari itself, so
+   this is a fixed buffer rather than something that reacts to it. */
 header {
   display: flex; align-items: baseline; justify-content: space-between;
-  padding: 14px 18px 10px;
+  padding: 44px 18px 10px;
   border-bottom: 1px solid var(--ink-line);
 }
 .brand { font-size: 1.25rem; letter-spacing: .04em; color: var(--gold-bright); }
