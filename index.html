@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>DrawNigh</title>
+<link rel="stylesheet" href="app.css">
+<link rel="icon" href="icons/icon-48.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#171310">
+<!-- iPhone "Add to Home Screen": Safari ignores manifest.webmanifest for this
+     and reads these tags instead, plus the apple-touch-icon link below. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="DrawNigh">
+<link rel="apple-touch-icon" href="icons/icon-128.png">
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand">Draw<span class="nigh">Nigh</span></div>
+    <div class="tagline-row">
+      <div class="tagline">Nearer to God, bit by bit.</div>
+      <button class="dots-btn" id="btnDots" title="More" aria-label="More">⋮<span class="waiting-dot" id="dotsDot" style="display:none"></span></button>
+    </div>
+  </header>
+
+  <div class="badges">
+    <span class="badge" id="badgePlan" style="display:none">🎯 0 / 0</span>
+    <span class="badge" id="badgeCount">📖 0 verses today</span>
+    <span class="badge" id="badgeStreak">🔥 0-day streak</span>
+  </div>
+
+  <main>
+    <!-- READER -->
+    <section class="screen active" id="screen-read">
+      <div class="mode-pills">
+        <button class="pill" data-mode="book">Book</button>
+        <button class="pill" data-mode="random">Random</button>
+        <button class="pill on" data-mode="plan">Plan</button>
+      </div>
+      <!-- v1.0.7: back on the main reading screen, where it lived before v1.0.4.
+           Shown only in Book mode (see setPills() in app.js). -->
+      <div id="bookPicker">
+        <select id="bookSelect" title="Book"></select>
+        <select id="chapSelect" title="Chapter"></select>
+        <select id="verseSelect" title="Verse"></select>
+      </div>
+      <div class="verse-stage" id="verseStage" title="Tap for the next verse">
+        <div class="ref-row">
+          <div class="verse-ref" id="verseRef"></div>
+          <!-- v1.0.4: the prayer timer. It belongs to THIS verse, which is why it
+               sits beside the reference and not among the navigation buttons. -->
+          <div class="pray-slot" id="praySlot" style="display:none">
+            <button class="pray-btn" id="btnPray" title="Pray">🙏 Pray</button>
+            <span class="pray-live" id="prayLive" style="display:none">
+              <button class="pray-left" id="prayLeft" title="Tap to pause">5:00</button>
+              <button class="pray-stretch" id="btnPrayStretch">+5</button>
+              <button class="pray-cancel" id="btnPrayCancel" title="End this prayer">✕</button>
+            </span>
+          </div>
+        </div>
+        <div class="verse-text" id="verseText"></div>
+        <div class="verse-note" id="verseNote" style="display:none"></div>
+        <div class="verse-foot" id="verseFoot"></div>
+        <div class="verse-foot book-foot" id="verseBookFoot"></div>
+        <!-- v1.0.9 item 13: where you are inside the chapter, counted the same
+             inclusive way as the two lines above it. -->
+        <div class="verse-foot book-foot" id="verseChapFoot"></div>
+      </div>
+      <div class="reader-controls">
+        <button class="nav-btn" id="btnPrev">‹ Prev</button>
+        <button class="heart-btn" id="btnFav" title="Save to Favorites">♥</button>
+        <!-- v1.0.9: ⚡ a verse that arrested him. Lightning, not a bulb — a bulb
+             is a good idea; this arrives from outside and is not summoned. -->
+        <button class="heart-btn gem-btn" id="btnGem" title="Mark as a Gem of Light">⚡</button>
+        <button class="nav-btn next" id="btnNext">Next ›</button>
+      </div>
+      <!-- v1.0.9: shown once, the first time both marks are on screen. -->
+      <div class="mark-hint" id="markHint" style="display:none">
+        <b>♥</b> a verse you want again &nbsp;·&nbsp; <b>⚡</b> a verse that stopped you where you stood
+      </div>
+    </section>
+
+    <!-- BOOKS -->
+    <section class="screen" id="screen-books">
+      <h2>The 66 Books</h2>
+      <div class="books-grid" id="booksGrid"></div>
+    </section>
+
+    <!-- PLANS -->
+    <section class="screen" id="screen-plans">
+      <h2>Reading Plans</h2>
+      <div id="plansList"></div>
+      <button class="wide-btn quiet" id="btnNewPlan">＋ New Plan</button>
+
+      <div id="planBuilder" style="display:none; margin-top:16px;">
+        <h2>New Plan</h2>
+        <div class="field">
+          <label for="pbScope">What will you read?</label>
+          <select id="pbScope">
+            <option value="" selected>Choose…</option>
+            <option value="full">Full Bible (31,100 verses)</option>
+            <option value="nt">New Testament</option>
+            <option value="ot">Old Testament</option>
+            <option value="book">A single book</option>
+            <option value="group">A group of books</option>
+            <option value="favorites">My Favorites</option>
+            <option value="featured">⭐ Thanksgiving &amp; Wisdom (Psalms + Proverbs)</option>
+            <option value="well">🪣 Digging the Well — stay in one book</option>
+          </select>
+        </div>
+        <!-- v1.0.9, item 9. A Well is a stationary book plan: finish the book
+             and it returns to its first verse instead of moving on. It carries
+             no daily number, so it is offered no duration. -->
+        <div class="calc" id="pbWellNote" style="display:none">A normal plan moves on when a book is finished. A Well returns to the beginning of the same one. It has no daily number and no end — only how far down the rope you are. One Well at a time.</div>
+        <div class="field" id="pbBookField" style="display:none">
+          <label for="pbBook">Which book?</label>
+          <select id="pbBook"></select>
+        </div>
+        <div class="field" id="pbGroupField" style="display:none">
+          <label>Which books?</label>
+          <div class="checks" id="pbGroup">
+            <div class="check-col">
+              <div class="check-col-title">Old Testament</div>
+              <div id="pbGroupOT"></div>
+            </div>
+            <div class="check-col">
+              <div class="check-col-title">New Testament</div>
+              <div id="pbGroupNT"></div>
+            </div>
+          </div>
+        </div>
+        <div class="field">
+          <label for="pbDays">In how long?</label>
+          <select id="pbDays">
+            <option value="" selected>Choose…</option>
+            <option value="7">1 week</option>
+            <option value="30">1 month</option>
+            <option value="90">3 months</option>
+            <option value="180">6 months</option>
+            <option value="365">1 year</option>
+            <option value="custom">Custom…</option>
+          </select>
+        </div>
+        <div class="field" id="pbCustomField" style="display:none">
+          <label for="pbCustom">Number of days</label>
+          <input type="number" id="pbCustom" min="1" placeholder="e.g. 14">
+        </div>
+        <div class="calc" id="pbCalc"></div>
+        <button class="wide-btn" id="btnLockPlan">Lock it in</button>
+        <div style="height:8px"></div>
+        <button class="wide-btn quiet" id="btnCancelPlan">Cancel</button>
+      </div>
+    </section>
+
+    <!-- GEMS OF LIGHT — v1.0.9 (v16.1 §1)
+         Not a rename. Two marks, because they are two different acts: a
+         favourite is a verse he liked; a gem is a verse that arrested him.
+         ONE list, because sometimes he does not yet know why it stopped him,
+         and a man looking for a verse he saved should not have to remember
+         which drawer he used that day. -->
+    <section class="screen" id="screen-favs">
+      <h2>Gems of Light</h2>
+      <p class="screen-note">Verses that lit something — a prayer, a decision, a thing to hold on to.</p>
+      <div class="mode-pills gem-filter">
+        <button class="pill on" data-gemfilter="all">All</button>
+        <button class="pill" data-gemfilter="gem">⚡ Gems</button>
+        <button class="pill" data-gemfilter="fav">♥ Favorites</button>
+      </div>
+      <div id="favsList"></div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="screen" id="screen-settings">
+      <h2>Settings</h2>
+
+      <!-- Web build: this feature needs a browser add-on injecting into other
+           websites, which a plain website cannot do. Hidden rather than
+           removed from state, in case a future build restores it another way. -->
+      <div class="setting" style="display:none">
+        <div class="row"><b>Pop-up verses while browsing</b>
+          <label class="toggle"><input type="checkbox" id="setSiteEnabled"></label></div>
+        <p>A verse card appears after a while on any website — comic time becomes Bible time.</p>
+        <div class="row" style="margin-top:8px"><span>Minutes on a page first</span>
+          <input type="number" id="setSiteMins" min="1" max="240"></div>
+      </div>
+
+      <div class="setting">
+        <div class="row"><b>Verse of the Moment (inside the app)</b>
+          <select id="setMomentMins">
+            <option value="0">Off</option>
+            <option value="30">Every 30 min</option>
+            <option value="60">Every hour</option>
+            <option value="120">Every 2 hours</option>
+          </select></div>
+        <div class="row" style="margin-top:8px"><span>Verses come from</span>
+          <select id="setMomentSource">
+            <option value="plan">My reading plan</option>
+            <option value="pp">Psalms &amp; Proverbs</option>
+            <option value="fav">My Favorites</option>
+          </select></div>
+        <p>Choose Psalms &amp; Proverbs or Favorites to keep your plan's bookmark untouched while Verse of the Moment is on.</p>
+      </div>
+
+      <!-- v1.0.4: the prayer timer. It counts nothing and records nothing —
+           the moment prayer is measured it becomes a performance. -->
+      <div class="setting">
+        <div class="row"><b>🙏 Prayer timer</b>
+          <label class="toggle"><input type="checkbox" id="setPray"></label></div>
+        <p>A verse can stop you. This gives you permission to stop watching the clock — it counts nothing, records nothing, and never appears in your streak.</p>
+        <div class="row" style="margin-top:8px"><span>A prayer starts at</span>
+          <select id="setPrayMins">
+            <option value="5">5 seconds</option>
+            <option value="30">30 seconds</option>
+            <option value="60">1 minute</option>
+            <option value="120">2 minutes</option>
+            <option value="180">3 minutes</option>
+            <option value="300">5 minutes</option>
+            <option value="600">10 minutes</option>
+            <option value="900">15 minutes</option>
+          </select></div>
+        <div class="row" style="margin-top:8px"><span>Each stretch adds</span>
+          <select id="setPrayStretch">
+            <option value="5">+5 seconds</option>
+            <option value="30">+30 seconds</option>
+            <option value="120">+2 minutes</option>
+            <option value="300">+5 minutes</option>
+            <option value="600">+10 minutes</option>
+          </select></div>
+        <div class="row" style="margin-top:8px"><span>When the time is up</span>
+          <select id="setPrayChime">
+            <option value="single">One soft chime</option>
+            <option value="double">Two soft chimes</option>
+            <option value="off">Silence</option>
+          </select></div>
+        <div class="row" style="margin-top:8px"><span>Chime volume</span>
+          <input type="range" id="setPrayVol" min="0" max="100" step="5" style="width:120px"></div>
+        <div class="plan-actions"><button class="small-btn" id="btnPrayTest">Hear it</button></div>
+        <p style="margin-top:6px">Quiet enough for a desk with someone sitting across it. If you are still praying when it sounds, stay praying — it is a notice, not a summons.</p>
+        <!-- v1.0.9, Decision 91 + Ruling 96. The app states what it cannot do
+             rather than pretending — the same move as Decision 53. The reason is
+             given because the reason IS the feature. -->
+        <p style="margin-top:10px">A sleeping phone switches this app off, and a switched-off app cannot sound. So the screen is held awake while a prayer runs — only while it runs. Lock the phone yourself and you have overruled that: the chime waits, and lands when you pick it up.</p>
+        <p style="margin-top:6px">While a prayer runs the screen stays on. In a pocket it can take stray taps.</p>
+      </div>
+
+      <div class="setting">
+        <div class="row"><b>Show translators' notes</b>
+          <label class="toggle"><input type="checkbox" id="setShowNotes"></label></div>
+        <p>The 1611 translators left notes in the margin — what the Hebrew or Greek says literally, or an alternative reading. They are kept out of the verse itself; switch this on to see them underneath.</p>
+      </div>
+
+      <!-- v1.0.4: dry-out. If no verse has been read for days the browsing card
+           comes round sooner — timing only. It never changes which verses show,
+           and any verse read in any mode puts it straight back to normal. -->
+      <!-- Web build: only ever affected the browsing pop-up card above, which
+           is hidden for the same reason. Hidden alongside it. -->
+      <div class="setting" style="display:none">
+        <div class="row"><b>When it has been a while</b>
+          <select id="setDryMins">
+            <option value="0">Leave the timer alone</option>
+            <option value="2">Every 2 minutes</option>
+            <option value="5">Every 5 minutes</option>
+            <option value="10">Every 10 minutes</option>
+            <option value="20">Every 20 minutes</option>
+          </select></div>
+        <p>After a few days with nothing read, the browsing card comes round this often instead of the usual wait — one verse, in front of you, sooner. Read anything at all and it goes back to normal immediately.</p>
+      </div>
+
+      <div class="setting">
+        <div class="row"><b>Verse card on this screen</b></div>
+        <p>On a computer the browsing verse card can be dragged wherever you like, and stays there. On a phone it always sits at the bottom.</p>
+        <div class="plan-actions">
+          <button class="small-btn" id="btnResetCard">Reset card position</button>
+        </div>
+      </div>
+
+      <div class="setting">
+        <div class="row"><b>Backup &amp; Restore</b></div>
+        <p>Your progress lives only on this device. Copy a backup code before switching browsers or phones. Codes from the original Mini BitBible app work here too.</p>
+        <!-- v1.0.9 (Decision 86): two doors here, and they serve two different
+             states. COPY is for a transfer you are making now. SAVE THE FILE is
+             for loss — one phone, no second device anywhere, dead or stolen or
+             site data cleared. Neither covers the other. The square is held
+             for v1.1.0; a square is only a picture of a code. -->
+        <div class="plan-actions">
+          <button class="small-btn gold" id="btnCopyBackup">Copy my backup code</button>
+          <button class="small-btn gold" id="btnSaveBackup">Save the file</button>
+        </div>
+        <div class="note" id="fileNote">A saved file survives a phone you no longer have. It goes wherever your browser puts downloads, and your phone may back it up to Google or iCloud — encrypted and useless to them, but there. That is why it survives.</div>
+        <textarea id="backupBox" placeholder="Paste a backup code here (BB2.… or BB1.…)" style="margin-top:10px"></textarea>
+        <div class="plan-actions">
+          <button class="small-btn gold" id="btnMerge">Merge</button>
+          <button class="small-btn" id="btnRestore">Replace</button>
+        </div>
+        <!-- Decision 77: the door never seals. Shown only while a claim stands. -->
+        <div class="plan-actions" id="confessRow" style="display:none">
+          <button class="small-btn" id="btnConfess">That claim was not right</button>
+        </div>
+        <p style="margin-top:6px"><b>Merge</b> adds the code's reading to this device — nothing is ever lost, so it is safe in both directions and an old code can do no harm. <b>Replace</b> wipes this device and installs the code instead; use it on a new phone.</p>
+        <div class="note" id="backupNote"></div>
+      </div>
+
+      <div class="setting" id="feedbackSetting" style="display:none">
+        <div class="row"><b>💬 What should DrawNigh do next?</b></div>
+        <p>Tell me what to build. Every version so far came from someone noticing something.</p>
+        <p style="margin-top:8px"><a id="feedbackLink" href="#" target="_blank" rel="noopener noreferrer" style="color:var(--gold-bright)">Open the suggestion box →</a></p>
+        <div class="note">(opens Google Forms — this leaves DrawNigh. The app itself still sends nothing anywhere.)</div>
+      </div>
+
+      <!-- v1.0.9, item 10 (v15.2 §3.4). The ladder's rungs run from five days
+           to a year, so real use cannot reach them and the wording could never
+           be seen before a reader saw it. Hidden on purpose: tap the James 4:8
+           line below seven times. It writes days that WERE read — it cannot
+           invent a debt, because the app has no concept of one. -->
+      <div class="setting" id="ladderTestSetting" style="display:none">
+        <div class="row"><b>🔧 Ladder test mode</b></div>
+        <p>Shows the offer that a real gap would produce. Nothing here counts, and the day log it writes is only what a reader would have read.</p>
+        <div class="row" style="margin-top:8px"><span>Consecutive low days</span>
+          <input type="number" id="ltDays" min="0" max="400" value="5" style="width:90px"></div>
+        <div class="row" style="margin-top:8px"><span>Verses on each of them</span>
+          <input type="number" id="ltPer" min="0" max="500" value="1" style="width:90px"></div>
+        <p style="margin-top:6px">Zero verses gives the “it’s been a while” voice; one or more gives the “you showed up” voice.</p>
+        <div class="plan-actions">
+          <button class="small-btn gold" id="btnLadderTest">Show me that rung</button>
+          <button class="small-btn" id="btnLadderClear">Clear the test days</button>
+        </div>
+        <div class="note" id="ltNote"></div>
+      </div>
+
+      <div class="setting">
+        <div class="row"><b>About &amp; Support</b></div>
+        <p>DrawNigh — <i>Nearer to God, bit by bit.</i> King James Version. Free forever.<br>
+        <span id="aboutLinks"></span></p>
+        <!-- v1.0.8: the same courtesy the suggestion box gets (v14.1 §3) — someone who
+             chose an extension that collects nothing is told before the tap that the
+             tap leaves it. Hidden entirely while LINKS.donate is empty. -->
+        <div class="note" id="donateNote" style="display:none">(opens Paystack — this leaves DrawNigh. The app itself still sends nothing anywhere.)</div>
+        <p style="margin-top:6px" id="aboutVerse">“Draw nigh to God, and he will draw nigh to you.” — James 4:8</p>
+      </div>
+    </section>
+  </main>
+
+  <nav>
+    <button data-screen="read" class="on"><span class="ico">📖</span>Read</button>
+    <button data-screen="books"><span class="ico">🕮</span>Books</button>
+    <button data-screen="plans"><span class="ico">🗓</span>Plans</button>
+    <button data-screen="favs"><span class="ico">⚡</span>Gems</button>
+    <button data-screen="settings"><span class="ico">⚙</span>Settings</button>
+  </nav>
+</div>
+
+<!-- v1.0.4: the ⋮ menu. Catch me up gives the verse back a row of the
+     reading screen. The ladder offer and the badges live here too — and
+     nowhere else. v1.0.7: the Book·Chapter·Verse jump row moved back out,
+     onto the main reading screen. -->
+<div class="sheet sheet-anchor" id="menuSheet">
+  <div class="sheet-panel">
+    <button class="menu-item" id="miCatchUp">⏩ Catch me up</button>
+
+    <button class="menu-item" id="miLadder" style="display:none">
+      <span id="miLadderText">A word about your plan</span><span class="waiting-dot"></span>
+    </button>
+
+    <button class="menu-item" id="miBadges">
+      🏅 Badges, rank &amp; streak<span class="waiting-dot" id="badgeDot" style="display:none"></span>
+    </button>
+
+    <button class="menu-item quiet" id="miClose">Close</button>
+  </div>
+</div>
+
+<!-- v1.0.4: the ladder. It only ever offers to lighten, and it says its piece
+     once and stops. Nothing here counts what was not read. -->
+<div class="overlay" id="ladderOverlay">
+  <div class="card">
+    <h3 id="ladderTitle">Your plan</h3>
+    <div class="verse-text" id="ladderText" style="font-size:1.1rem"></div>
+    <div class="note" id="ladderNote"></div>
+    <div class="actions">
+      <button class="nav-btn next" id="ladderAccept">Match my pace</button>
+      <button class="nav-btn" id="ladderDecline">Leave it as it is</button>
+    </div>
+  </div>
+</div>
+
+<!-- v1.0.4: badges. Discovered, never announced — no banner ever covers a verse. -->
+<div class="sheet" id="badgeSheet">
+  <div class="sheet-panel wide">
+    <!-- v1.0.9, Decision 88. Fixed at the head of the screen, not rotating and
+         not dismissible. The ladders below are a description of the road, not a
+         reward for progress — and this is the frame that makes them safe to
+         show in full. God at the top; other men at the foot. -->
+    <div class="inscription">
+      <div class="inscription-line">PRESENCE OVER PERFORMANCE</div>
+      <div class="inscription-note">No number here makes a man nearer to God than another. He draws nigh to whoever draws nigh to Him.</div>
+    </div>
+
+    <div class="badge-head">
+      <div>
+        <button class="rank-name ladder-open" id="bRank" data-ladder="rank">Recruit</button>
+        <div class="note" id="bRankNote"></div>
+      </div>
+      <button class="small-btn" id="bClose">Close</button>
+    </div>
+
+    <div class="badge-block">
+      <button class="badge-title ladder-open" id="bStreakName" data-ladder="streak">—</button>
+      <div class="note" id="bStreakNote"></div>
+    </div>
+
+    <div class="badge-block">
+      <div class="badge-title">The 66 Books</div>
+      <div class="note">A road with sixty-six markers. Tap one.</div>
+      <div class="tile-grid" id="bTiles"></div>
+    </div>
+
+    <div id="bDetail" style="display:none"></div>
+
+    <!-- v1.0.9, Decision 90: each heading opens its own full ladder here.
+         One screen, sections, nothing scrolling forever and nothing hidden. -->
+    <div id="bLadder" style="display:none"></div>
+
+    <!-- v1.0.9, Decision 88 / v16.1 §2.1 — a date says something happened,
+         a rank says where you stand. This is the first kind. -->
+    <div class="badge-block" id="bMilestones" style="display:none">
+      <div class="badge-title">Milestones</div>
+      <div class="note">When each of these was reached.</div>
+      <div id="bMilestoneList"></div>
+    </div>
+
+    <p class="note" style="margin-top:14px">In this journey, you are outranking yourself. DrawNigh has never shown you another reader, and never will.</p>
+  </div>
+</div>
+
+<!-- v1.0.9, item 3 (v16 §1). The app has no server and nothing to check
+     against, so it says so and lets the man answer for himself. -->
+<div class="overlay" id="gapOverlay">
+  <div class="card">
+    <h3>The days in between</h3>
+    <div class="verse-text" style="font-size:1.05rem" id="gapText"></div>
+    <div class="actions">
+      <button class="nav-btn next" id="gapYes">Yes, I read</button>
+      <button class="nav-btn" id="gapNo">No, it broke</button>
+    </div>
+    <p class="note" style="margin-top:10px">Nothing is checked and nothing is watched. If this later sits wrong with you, there is a way back in Settings — and saying so never costs you a day you really read.</p>
+  </div>
+</div>
+
+<!-- v1.0.9, item 9 (v16.1 §4.4). The lap ends, it names the count, and he
+     chooses. Nothing rolls over silently: the returns are the whole point. -->
+<div class="overlay" id="wellOverlay">
+  <div class="card">
+    <h3 id="wellTitle">The bucket is full</h3>
+    <div class="verse-text" style="font-size:1.05rem" id="wellText"></div>
+    <div class="actions">
+      <button class="nav-btn next" id="wellAgain">Draw again</button>
+      <button class="nav-btn" id="wellStop">Enough for now</button>
+    </div>
+    <p class="note" style="margin-top:10px">Ending is not abandoning. You finished a lap and chose to stop — the count stays with the book, permanently.</p>
+  </div>
+</div>
+
+<!-- v1.0.4: offered once, at setup. Never assumed, never nudged. -->
+<div class="overlay" id="declareOverlay">
+  <div class="card">
+    <h3>Before DrawNigh</h3>
+    <div class="verse-text" style="font-size:1.05rem">DrawNigh arrived late in most people's walk. If you have read the Bible through before, you can place that history here — or leave it where it is. There is no one to answer to but God.</div>
+    <div class="field" style="margin-top:14px">
+      <label for="declareCount">Whole Bibles finished before DrawNigh</label>
+      <input type="number" id="declareCount" min="0" max="500" value="0">
+    </div>
+    <div class="actions">
+      <button class="nav-btn next" id="declareSave">Place it</button>
+      <button class="nav-btn" id="declareSkip">Start at Recruit</button>
+    </div>
+  </div>
+</div>
+
+<!-- Verse of the Day / Verse of the Moment -->
+<div class="overlay" id="vodOverlay">
+  <div class="card">
+    <h3 id="vodTitle">Verse of the Day</h3>
+    <div class="verse-text" id="vodText"></div>
+    <div class="verse-ref" id="vodRef"></div>
+    <div class="actions">
+      <button class="nav-btn next" id="vodClose">Amen</button>
+    </div>
+  </div>
+</div>
+
+<!-- Catch Up dialog -->
+<div class="overlay" id="cuOverlay">
+  <div class="card">
+    <h3 id="cuTitle">Catch up — paper Bible bridge</h3>
+    <p style="font-size:.9rem; color:var(--parchment-dim); margin-bottom:12px">
+      I've read up to here in my physical Bible — believe me and move on.</p>
+    <div class="field">
+      <label for="cuBook">I stopped at…</label>
+      <div class="cu-row">
+        <select id="cuBook" title="Book"></select>
+        <select id="cuChapter" title="Chapter"></select>
+        <select id="cuVerse" title="Verse"></select>
+      </div>
+    </div>
+    <div class="calc" id="cuPreview"></div>
+    <label class="toggle" style="margin-bottom:14px"><input type="checkbox" id="cuToday" checked>
+      I read these today (credit my counter &amp; streak)</label>
+    <div class="actions">
+      <button class="nav-btn" id="cuCancel">Cancel</button>
+      <button class="nav-btn next" id="cuConfirm">Mark as read</button>
+    </div>
+  </div>
+</div>
+
+<script src="engine.js"></script>
+<script src="app.js"></script>
+<script>
+// Keeps the app usable offline and lets it be added to a Home Screen like a
+// real app. If registration fails for any reason, the app still works —
+// it just won't be available offline.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('sw.js').catch(function () {});
+  });
+}
+</script>
+</body>
+</html>
