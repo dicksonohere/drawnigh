@@ -175,6 +175,19 @@
     <section class="screen" id="screen-settings">
       <h2>Settings</h2>
 
+      <!-- Web build: a second, always-reachable way to the ⋮ menu's two
+           items. The ⋮ button lives at the very top of the screen, which on
+           a phone can be covered by a call banner (see the header padding
+           above) — this row lives here instead, at the bottom of the
+           screen, where nothing from the top of the phone can ever reach. -->
+      <div class="setting">
+        <div class="row"><b>Quick access</b></div>
+        <div class="plan-actions" style="margin-top:8px">
+          <button class="small-btn gold" id="setBadges">🏅 Badges, rank &amp; streak</button>
+          <button class="small-btn gold" id="setCatchUp" style="display:none">⏩ Catch me up</button>
+        </div>
+      </div>
+
       <!-- Web build: this feature needs a browser add-on injecting into other
            websites, which a plain website cannot do. Hidden rather than
            removed from state, in case a future build restores it another way. -->

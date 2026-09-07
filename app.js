@@ -1230,6 +1230,9 @@
     var plan = state.activePlanId ? E.getPlan(state, state.activePlanId) : null;
     var show = plan && plan.scopeType !== 'favorites';
     item.style.display = show ? '' : 'none';
+    // Web build: the Settings-screen copy of this button follows the same rule.
+    var item2 = $('setCatchUp');
+    if (item2) item2.style.display = show ? '' : 'none';
   }
 
   function setPills() {
@@ -1258,6 +1261,11 @@
     // v1.0.4: Catch me up now opens from inside the ⋮ menu.
     $('miCatchUp').onclick = function () {
       closeMenu();
+      if (state.activePlanId) openCatchUp(state.activePlanId);
+    };
+    // Web build: Settings-screen copies of the ⋮ menu's two items.
+    $('setBadges').onclick = openBadges;
+    $('setCatchUp').onclick = function () {
       if (state.activePlanId) openCatchUp(state.activePlanId);
     };
     $('chapSelect').onchange = function (e) {

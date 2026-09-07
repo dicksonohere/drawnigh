@@ -3,7 +3,7 @@
    bible.json or notes.json change — that is what makes a phone that already
    has the app take the new copy. Without the bump it keeps serving the old
    one from cache. */
-var CACHE = 'drawnigh-v2';
+var CACHE = 'drawnigh-v3';
 var ASSETS = [
   './',
   './index.html',
