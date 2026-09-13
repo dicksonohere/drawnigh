@@ -27,20 +27,25 @@ input, select { font-family: inherit; font-size: 1rem; }
 #app { display: flex; flex-direction: column; height: 100%; height: 100dvh; }
 
 /* ---------- Header ---------- */
-/* Web build: extra top clearance (14px -> 84px) so the ⋮ button stays below
-   an ongoing-call banner. The OS does not resize the page for that banner on
-   a Home-Screen web app the way it does inside the browser itself, so this
-   is a fixed buffer rather than something that reacts to it. A first, smaller
-   buffer (44px) was still covered by a two-hour WhatsApp call's banner, which
-   runs taller than an ordinary phone call's — this is deliberately generous.
-   The same two items this button opens are also reachable from Settings
-   (bottom of the screen, never covered by anything at the top) as a fallback
-   that needs no buffer size to be right. */
+/* WEB BUILD — the call-banner buffer, carried from the v1.0.9 web build.
+   Found by his sister, live: she could not tap the ⋮ button because her
+   phone's ongoing-call banner was drawn on top of it. Inside a browser tab a
+   call banner pushes the page down; for a Home-Screen web app it draws over
+   the page without resizing anything, and env(safe-area-inset-top) does not
+   move — there is no CSS signal to react to, so this is a fixed guess at the
+   banner's height. 44px was not enough; a long WhatsApp call's banner is
+   taller. 84px was. The Quick access block in Settings is the other half of
+   that fix, and the half that needs no guess. */
 header {
   display: flex; align-items: baseline; justify-content: space-between;
   padding: 84px 18px 10px;
   border-bottom: 1px solid var(--ink-line);
 }
+
+/* WEB BUILD — the long press must not raise the phone's text-selection menu,
+   and the button shows that it has armed. */
+#btnListen { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+#btnListen.arming { opacity: .55; }
 .brand { font-size: 1.25rem; letter-spacing: .04em; color: var(--gold-bright); }
 .brand .nigh { font-style: italic; }
 .tagline { font-size: .72rem; color: var(--parchment-dim); letter-spacing: .06em; font-style: italic; }
@@ -157,6 +162,14 @@ h2:first-child { margin-top: 4px; }
   padding: 16px 16px calc(18px + env(safe-area-inset-bottom));
 }
 @media (min-width: 700px) { .sheet-panel { max-width: 720px; margin: 0 auto; border-radius: 16px; } }
+/* v1.1.2, F13 — on a phone, docking to the bottom is the whole point (a
+   thumb's distance from anywhere), so that stays exactly as it was. On a wide
+   window a sheet squashed against the bottom edge read as disconnected from
+   the reading screen above it. The ⋮ menu (.sheet-anchor) is its own separate
+   case, already excluded, and is untouched by this rule. */
+@media (min-width: 700px) {
+  .sheet.show:not(.sheet-anchor) { align-items: center; }
+}
 /* v1.0.7: on a phone, every sheet slides up from the bottom — a thumb's
    distance from anywhere. On a wide desktop/laptop window that same bottom
    dock reads as disconnected from the small ⋮ button up in the corner, so
@@ -183,6 +196,16 @@ h2:first-child { margin-top: 4px; }
 .menu-item.quiet { color: var(--parchment-dim); border-bottom: none; text-align: center; }
 
 .badge-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 6px; }
+/* v1.1.1, finding F3 — the inscription and Close stay put while the rest of the
+   sheet scrolls under them. The panel is the scroll container, so the head
+   sticks to its top; the negative margins pull it out to the panel's edges so
+   nothing shows through beside it, and the padding puts back what they took. */
+.sheet-head {
+  position: sticky; top: 0; z-index: 3;
+  background: var(--ink-raised);
+  margin: -16px -16px 0; padding: 16px 16px 6px;
+  border-bottom: 1px solid var(--ink-line);
+}
 .rank-name { font-size: 1.3rem; color: var(--gold-bright); }
 .badge-block { padding: 14px 0; border-top: 1px solid var(--ink-line); }
 .badge-title { font-size: 1.02rem; color: var(--gold); }
@@ -294,10 +317,18 @@ nav button {
 nav button .ico { font-size: 1.15rem; }
 nav button.on { color: var(--gold-bright); }
 
-/* ---------- Overlays (VOD / moment / dialogs) ---------- */
+/* ---------- Overlays (VOD / moment / dialogs) ----------
+   v1.1.2: overlays now sit ABOVE sheets (.sheet is 60). Until this build no
+   overlay was ever raised from inside an open sheet, so 50 was never wrong.
+   Decision 126 opens the making overlay from inside the room, and Decision
+   132 opens the filing prompt from the writing page — both inside the room
+   sheet — and at 50 they opened silently BEHIND it, visible but dead to every
+   tap. The same fix frees the one place v1.1.1 already had this: unsealing a
+   category, which asks for the word from inside the room. An overlay is a
+   modal question; nothing should ever cover one. */
 .overlay {
   position: fixed; inset: 0; background: rgba(10,8,6,.82); display: none;
-  align-items: center; justify-content: center; padding: 22px; z-index: 50;
+  align-items: center; justify-content: center; padding: 22px; z-index: 70;
 }
 .overlay.show { display: flex; }
 .card {
@@ -394,3 +425,196 @@ nav button.on { color: var(--gold-bright); }
 }
 .plan-edit .effect { font-size: .82rem; color: var(--gold-bright); font-style: italic; margin-top: 8px; }
 .well-meta { font-size: .92rem; color: var(--gold-bright); font-style: italic; }
+
+/* ================= v1.1.0 ================= */
+
+/* The season greets him with the verse of the day. A general feature — which
+   is what stops it saying anything about a room. */
+.season-line{
+  margin:0 0 10px; padding:8px 12px; border-radius:10px;
+  background:rgba(200,162,74,.08); border:1px solid rgba(200,162,74,.25);
+  color:var(--gold-bright); font-size:.92rem; line-height:1.45;
+}
+.season-line .season-lbl{ display:block; font-size:.72rem; letter-spacing:.08em;
+  text-transform:uppercase; opacity:.7; margin-bottom:2px; }
+/* --ink is the near-black BACKGROUND, not a text colour: a first cut set the
+   reminder in it and drew black text on a black card. The line was in the DOM,
+   correct, and invisible — found in a screenshot, not by a check, exactly as
+   the unlit ⚡ was in v1.0.9. */
+.remind-line{ background:transparent; border-style:dashed; color:var(--parchment); opacity:.85; }
+
+/* Reading aloud. It sits with the prayer timer because both belong to the
+   verse on screen, not to the navigation. */
+.listen-btn{ min-width:auto; padding:4px 10px; }
+.listen-btn.on{ background:var(--gold); color:#1a1408; }
+.audio-bar{
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  margin-top:10px; padding:8px 12px; border-radius:10px;
+  background:rgba(200,162,74,.07); border:1px solid rgba(200,162,74,.2);
+  font-size:.9rem;
+}
+.audio-bar span{ flex:1 1 auto; }
+
+/* The square. Drawn on a canvas, so nothing here builds markup. */
+.square-wrap{
+  display:flex; justify-content:center; align-items:center;
+  margin:10px 0; padding:10px; border-radius:12px; background:#fff;
+}
+/* v1.1.4, Decision 156 — F35. The cap was 460px inside a panel that offers up
+   to 688, so a version-40 square (177 modules) landed at roughly three screen
+   pixels a module with dark screen going spare on both sides. A phone camera
+   wants four or five. The square now takes the panel properly, and is still
+   bounded by the shorter side of the window so it never overflows the sheet. */
+.square-wrap canvas{ width:100%; max-width:min(92vw, 74vh, 680px); height:auto; image-rendering:pixelated; }
+/* Tapping the square fills the screen — the most modules-per-inch obtainable
+   without adding a square. Heading, buttons and the bottom bar all out of the
+   way, white ground kept because that is what a scanner wants. */
+.square-wrap.full{
+  position:fixed; inset:0; z-index:200; margin:0; padding:0;
+  border-radius:0; background:#fff;
+}
+.square-wrap.full canvas{ max-width:min(100vw, 100vh); width:min(100vw, 100vh); }
+.square-wrap video{ width:100%; max-width:340px; border-radius:8px; background:#000; }
+
+/* The Secret Place. Nothing in here counts, and nothing in here is a score. */
+.room-season{ font-size:1rem; color:var(--gold-bright); line-height:1.4; }
+.room-season .none{ opacity:.55; font-style:italic; }
+/* v1.1.2, F14 — fixed chrome, never text a category name can reproduce. */
+.room-season .season-label{ display:block; font-size:.7rem; letter-spacing:.08em; text-transform:uppercase; color:var(--gold); opacity:.8; margin-bottom:1px; }
+.file-marks{ display:flex; flex-direction:column; gap:8px; margin:10px 0; }
+.file-marks label{ display:flex; align-items:center; gap:8px; font-size:.92rem; cursor:pointer; }
+.file-marks input{ width:auto; margin:0; }
+/* v1.1.2, Decision 132 — the two ticks sit above the writing box itself now,
+   unclaimed until touched; a little extra room keeps them from crowding it. */
+.file-marks-top{ margin-bottom:12px; }
+.knock-pad{
+  margin:12px 0; padding:26px 12px; text-align:center; cursor:pointer;
+  border:1px dashed rgba(200,162,74,.5); border-radius:12px;
+  background:rgba(200,162,74,.05); color:var(--gold-bright); user-select:none;
+}
+.knock-pad.armed{ background:rgba(200,162,74,.14); }
+.room-entry{
+  padding:10px 0; border-bottom:1px solid rgba(255,255,255,.07);
+}
+.room-entry .when{ font-size:.76rem; opacity:.6; letter-spacing:.04em; }
+.room-entry .title{ font-weight:600; margin:2px 0; }
+.room-entry .body{ white-space:pre-wrap; line-height:1.5; font-size:.94rem; }
+.room-entry .marks{ font-size:.76rem; opacity:.7; margin-top:4px; }
+/* v1.1.3, Decision 133 — the heading is whatever names the letter: its title
+   if it has one, otherwise its date. Centred either way, with the date
+   dropping to a small line beneath when a title has taken its place. */
+.room-entry .head{
+  font-weight:600; font-size:1.04rem; text-align:center; margin:2px 0 1px;
+}
+.room-entry .sub{
+  font-size:.74rem; opacity:.55; letter-spacing:.04em; text-align:center;
+  margin-bottom:6px;
+}
+/* v1.1.3, Decision 134 — an edit is said quietly, never hidden. */
+.room-entry .edited{ font-size:.72rem; opacity:.5; margin-top:6px; font-style:italic; }
+/* v1.1.3, Decision 134 — editing on the letter itself, in the room's own look.
+   No browser dialog ever touches a man's writing again. */
+.room-entry.editing{ padding:12px 0; }
+.room-entry .edit-title, .room-entry .edit-body{
+  width:100%; box-sizing:border-box; margin:6px 0;
+}
+.room-entry .edit-body{ white-space:pre-wrap; line-height:1.5; resize:vertical; }
+.room-entry .edit-tick{
+  display:flex; gap:8px; align-items:flex-start;
+  font-size:.8rem; opacity:.85; margin:6px 0;
+}
+.room-entry .edit-tick input{ margin-top:3px; flex:0 0 auto; }
+.room-entry .edit-acts{ display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; }
+.room-cat{
+  display:flex; justify-content:space-between; align-items:center; gap:10px;
+  padding:10px 0; border-bottom:1px solid rgba(255,255,255,.07); cursor:pointer;
+}
+.room-cat .nm{ font-weight:600; flex:1 1 auto; min-width:0; }
+/* v1.1.4, Decision 147 — a row can now carry Rename, Seal and Open. They keep
+   their order and Open always holds the last column; on a narrow phone they
+   wrap rather than squeezing the name out of the row. */
+.room-cat .small-btn{ flex:0 0 auto; }
+@media (max-width: 420px){
+  .room-cat{ flex-wrap:wrap; }
+  .room-cat .nm{ flex:1 0 100%; }
+}
+/* v1.1.4, Decisions 174–177 — renaming happens on the row, in the room's own
+   look, the same way Decision 134 put editing on the letter. */
+.room-cat.renaming{ display:block; cursor:default; padding:12px 0; }
+.room-cat.renaming .edit-title{ width:100%; box-sizing:border-box; margin:6px 0; }
+.room-cat.renaming .edit-acts{ display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; }
+/* v1.1.4, Decision 166 — Edit, Filed as… and Seal in one row, in the same
+   place on every letter. The room's rule is that a thing behaves the same way
+   every time; a Seal that moves about is the same odd-one-out fault as F32. */
+.room-entry .entry-acts{ display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; }
+#makePicker{ display:flex; gap:6px; margin:10px 0; }
+#makePicker select{ flex:1 1 0; min-width:0; }
+
+
+/* ---------- v1.1.1: The Secret Place ---------- */
+/* The words of a verse, offered as chips. Shown on the word panel for every
+   owner whatever shape he chose, so the panel never says which one it is. */
+.word-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; }
+.word-chips button {
+  font-family: inherit; font-size: .86rem; line-height: 1;
+  padding: 7px 9px; border-radius: 999px;
+  border: 1px solid var(--ink-line); background: transparent;
+  color: var(--parchment); cursor: pointer;
+}
+.word-chips button:hover, .word-chips button:focus { border-color: var(--gold); color: var(--gold-bright); }
+/* Shown once, at the making, and never again. */
+.reveal { border: 1px solid var(--gold); border-radius: 12px; padding: 14px 15px; background: rgba(200,162,74,.06); }
+.reveal-row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; font-size: .92rem; }
+.reveal-row b { color: var(--gold-bright); letter-spacing: .04em; }
+.reveal-note { font-size: .78rem; color: var(--parchment-dim); font-style: italic; margin-top: 8px; line-height: 1.5; }
+
+/* ---------- v1.1.3, Decision 140: browsing the categories ---------- */
+/* Type-ahead only finds what a man can already half-remember. The button
+   beside the box opens the whole list, so a name he has entirely forgotten is
+   still one tap away — and picking from it can never make a second category
+   out of a typo. */
+.cat-field{ display:flex; gap:6px; align-items:center; max-width:55%; }
+.cat-field input{ flex:1 1 auto; min-width:0; }
+.cat-field .small-btn{ flex:0 0 auto; }
+/* v1.1.4, Decision 151 — tap-to-reveal on EVERY word box: the door, the
+   making, the change-the-word screen and the backup box alike. Dots by
+   default everywhere; the tap is the owner's own choice, which is what keeps
+   it safe in a public place. One box behaving differently from the rest is
+   the same odd-one-out fault as F32. */
+.pin-field{ display:flex; gap:6px; align-items:center; width:100%; margin:6px 0; }
+.pin-field input{ flex:1 1 auto; min-width:0; margin:0; }
+.pin-field .small-btn{ flex:0 0 auto; }
+.cat-picker{
+  display:flex; flex-wrap:wrap; gap:6px;
+  margin:8px 0 0; padding:8px 0 0;
+  border-top:1px solid rgba(255,255,255,.07);
+}
+.cat-picker button{
+  font:inherit; font-size:.82rem; cursor:pointer;
+  background:rgba(255,255,255,.06); color:inherit;
+  border:1px solid rgba(255,255,255,.14); border-radius:999px;
+  padding:5px 11px;
+}
+.cat-picker button:hover{ background:rgba(255,255,255,.12); }
+.cat-picker .none{ font-size:.8rem; opacity:.6; }
+
+/* ---------- v1.1.3, Decisions 135 + 143: Back and Close, as a pair ---------- */
+/* They belong together or a man reaches for one and finds the other. Never
+   stacked, never at opposite ends of a screen. */
+.head-pair{ display:flex; gap:8px; align-items:center; flex:0 0 auto; }
+
+/* ---------- v1.1.3, Decision 139: every sheet keeps its head ---------- */
+/* F27. v1.1.1 fixed this for the badges sheet alone (old finding F3) and the
+   fix stayed where it was built, so the room's own settings scrolled its
+   header and its Close clean off the top. Decision 139 makes it the rule
+   rather than one screen's repair: ANY sheet with a Close button keeps that
+   head, and that button, fixed while its content scrolls beneath.
+   Written as a direct-child selector on purpose — the badges sheet nests its
+   .badge-head inside .sheet-head, which is already sticky, and sticking both
+   would leave the inner one floating a header's depth down the panel. */
+.sheet-panel > .badge-head {
+  position: sticky; top: 0; z-index: 3;
+  background: var(--ink-raised);
+  margin: -16px -16px 6px; padding: 16px 16px 8px;
+  border-bottom: 1px solid var(--ink-line);
+}

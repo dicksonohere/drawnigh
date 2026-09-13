@@ -1,52 +1,66 @@
-/* DrawNigh (web) — offline cache.
-   Bump CACHE's version number whenever index.html, app.js, engine.js, app.css,
-   bible.json or notes.json change — that is what makes a phone that already
-   has the app take the new copy. Without the bump it keeps serving the old
-   one from cache. */
-var CACHE = 'drawnigh-v3';
-var ASSETS = [
-  './',
-  './index.html',
-  './app.css',
-  './app.js',
-  './engine.js',
-  './bible.json',
-  './notes.json',
-  './manifest.webmanifest',
-  './icons/icon-16.png',
-  './icons/icon-32.png',
-  './icons/icon-48.png',
-  './icons/icon-96.png',
-  './icons/icon-128.png'
+/* DrawNigh — service worker for the web build.
+
+   Cache name discipline, carried from the v1.0.9 web build and from Order My
+   Steps' oms-vN: BUMP THE NUMBER on every build that changes any file listed
+   below. A failed upload and a stale cache look identical from the phone, and
+   the number is what separates them.
+
+   drawnigh-v1 → first web build, 6 Sep 2026
+   drawnigh-v2 → 44px header buffer
+   drawnigh-v3 → 84px header buffer + Quick access
+   drawnigh-v4 → Web 1.1.4 — The Secret Place, reading aloud, seasons, the
+                 square, and the long press that holds the screen light.
+*/
+var CACHE = 'drawnigh-v4';
+var FILES = [
+  '.',
+  'index.html',
+  'app.css',
+  'app.js',
+  'engine.js',
+  'qrcode.js',
+  'jsqr.js',
+  'bible.json',
+  'notes.json',
+  'manifest.webmanifest',
+  'icons/icon-48.png',
+  'icons/icon-96.png',
+  'icons/icon-128.png'
 ];
 
 self.addEventListener('install', function (e) {
-  e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(ASSETS); }));
-  self.skipWaiting();
+  e.waitUntil(
+    caches.open(CACHE).then(function (c) { return c.addAll(FILES); })
+          .then(function () { return self.skipWaiting(); })
+  );
 });
 
 self.addEventListener('activate', function (e) {
   e.waitUntil(
     caches.keys().then(function (keys) {
-      return Promise.all(keys.filter(function (k) { return k !== CACHE; }).map(function (k) { return caches.delete(k); }));
+      return Promise.all(keys.map(function (k) {
+        return (k === CACHE) ? null : caches.delete(k);
+      }));
     }).then(function () { return self.clients.claim(); })
   );
 });
 
-// Serve from cache first (so the app opens instantly and works offline),
-// and quietly fetch a fresh copy in the background for next time.
+/* Stale-while-revalidate: the page opens instantly from the cache and the
+   fresh copy is fetched behind it for next time. Only same-origin GETs — a
+   reading app has nothing else to serve. */
 self.addEventListener('fetch', function (e) {
   if (e.request.method !== 'GET') return;
+  if (new URL(e.request.url).origin !== self.location.origin) return;
   e.respondWith(
-    caches.match(e.request).then(function (cached) {
-      var network = fetch(e.request).then(function (res) {
+    caches.match(e.request).then(function (hit) {
+      var live = fetch(e.request).then(function (res) {
         if (res && res.status === 200) {
           var copy = res.clone();
           caches.open(CACHE).then(function (c) { c.put(e.request, copy); });
         }
         return res;
-      }).catch(function () { return cached; });
-      return cached || network;
+      }).catch(function () { return hit; });
+      return hit || live;
     })
   );
 });

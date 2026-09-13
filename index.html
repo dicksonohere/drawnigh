@@ -6,10 +6,11 @@
 <title>DrawNigh</title>
 <link rel="stylesheet" href="app.css">
 <link rel="icon" href="icons/icon-48.png">
+<!-- WEB BUILD — Add to Home Screen. iPhone ignores manifest.webmanifest when
+     deciding how a home-screen app opens; it reads these four apple- tags
+     instead. Both are present so Android and iPhone each find what they use. -->
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#171310">
-<!-- iPhone "Add to Home Screen": Safari ignores manifest.webmanifest for this
-     and reads these tags instead, plus the apple-touch-icon link below. -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="DrawNigh">
@@ -34,6 +35,14 @@
   <main>
     <!-- READER -->
     <section class="screen active" id="screen-read">
+      <!-- v1.1.0 (v16.1 §3.2): "Let it greet him when he opens the Bible app
+           itself, together with the verse of the day." A GENERAL feature, set
+           by any reader — which is exactly what stops it being a tell. A season
+           drawn from The Secret Place could only have come from one place. -->
+      <div class="season-line" id="seasonLine" style="display:none"></div>
+      <!-- The room's reminder, in his own words or a verse he chose. Every
+           three days, fixed. It says nothing about a room to anyone but him. -->
+      <div class="season-line remind-line" id="remindLine" style="display:none"></div>
       <div class="mode-pills">
         <button class="pill" data-mode="book">Book</button>
         <button class="pill" data-mode="random">Random</button>
@@ -53,6 +62,9 @@
                sits beside the reference and not among the navigation buttons. -->
           <div class="pray-slot" id="praySlot" style="display:none">
             <button class="pray-btn" id="btnPray" title="Pray">🙏 Pray</button>
+            <!-- v1.1.0 (v18): the voice already in the phone. Nothing is
+                 downloaded and nothing is sent. A verse heard is a verse read. -->
+            <button class="pray-btn listen-btn" id="btnListen" title="Read aloud" style="display:none">▶</button>
             <span class="pray-live" id="prayLive" style="display:none">
               <button class="pray-left" id="prayLeft" title="Tap to pause">5:00</button>
               <button class="pray-stretch" id="btnPrayStretch">+5</button>
@@ -75,6 +87,13 @@
              is a good idea; this arrives from outside and is not summoned. -->
         <button class="heart-btn gem-btn" id="btnGem" title="Mark as a Gem of Light">⚡</button>
         <button class="nav-btn next" id="btnNext">Next ›</button>
+      </div>
+      <!-- v1.1.0 (v18, Decision 107): it reads a chapter, then stops and waits.
+           A man cooking can tap. A phone on a table cannot. -->
+      <div class="audio-bar" id="audioBar" style="display:none">
+        <span id="audioState">Reading aloud…</span>
+        <button class="small-btn" id="btnAudioGo" style="display:none">Carry on</button>
+        <button class="small-btn" id="btnAudioStop">Stop</button>
       </div>
       <!-- v1.0.9: shown once, the first time both marks are on screen. -->
       <div class="mark-hint" id="markHint" style="display:none">
@@ -141,11 +160,25 @@
             <option value="180">6 months</option>
             <option value="365">1 year</option>
             <option value="custom">Custom…</option>
+            <!-- v1.1.4, Decision 149 — two more ways to say the same thing.
+                 A man with a date in mind should not have to count the days to
+                 it, and a man who knows what he can read in a sitting should
+                 not have to work backwards from a duration. -->
+            <option value="date">Finish on a date…</option>
+            <option value="perday">So many verses a day…</option>
           </select>
         </div>
         <div class="field" id="pbCustomField" style="display:none">
           <label for="pbCustom">Number of days</label>
           <input type="number" id="pbCustom" min="1" placeholder="e.g. 14">
+        </div>
+        <div class="field" id="pbDateField" style="display:none">
+          <label for="pbDate">Finish on</label>
+          <input type="date" id="pbDate">
+        </div>
+        <div class="field" id="pbPerDayField" style="display:none">
+          <label for="pbPerDay">Verses a day</label>
+          <input type="number" id="pbPerDay" min="1" placeholder="e.g. 20">
         </div>
         <div class="calc" id="pbCalc"></div>
         <button class="wide-btn" id="btnLockPlan">Lock it in</button>
@@ -174,23 +207,28 @@
     <!-- SETTINGS -->
     <section class="screen" id="screen-settings">
       <h2>Settings</h2>
+      <!-- v1.1.2, F11 — a hand-tester running several builds in a row could
+           not tell them apart from inside the app. -->
+      <p class="note" id="settingsVersion" style="margin-top:-6px"></p>
 
-      <!-- Web build: a second, always-reachable way to the ⋮ menu's two
-           items. The ⋮ button lives at the very top of the screen, which on
-           a phone can be covered by a call banner (see the header padding
-           above) — this row lives here instead, at the bottom of the
-           screen, where nothing from the top of the phone can ever reach. -->
+      <!-- WEB BUILD — Quick access, carried from the v1.0.9 web build.
+           The other half of the call-banner fix, and the half that needs no
+           guess at any banner's height: Settings is reached from the bottom
+           nav, so nothing drawn at the top of the phone can ever cover this
+           path. These are the ⋮ menu's two items, reachable a second way. -->
       <div class="setting">
         <div class="row"><b>Quick access</b></div>
-        <div class="plan-actions" style="margin-top:8px">
-          <button class="small-btn gold" id="setBadges">🏅 Badges, rank &amp; streak</button>
-          <button class="small-btn gold" id="setCatchUp" style="display:none">⏩ Catch me up</button>
+        <p>The same two things the ⋮ button holds, reachable from down here as well.</p>
+        <div class="plan-actions">
+          <button class="small-btn" id="setBadges">Badges</button>
+          <button class="small-btn" id="setCatchUp">Catch me up</button>
         </div>
       </div>
 
-      <!-- Web build: this feature needs a browser add-on injecting into other
-           websites, which a plain website cannot do. Hidden rather than
-           removed from state, in case a future build restores it another way. -->
+      <!-- WEB BUILD — dead here. A website cannot put a card onto other
+           websites; that was content.js, and no browser allows it from a plain
+           page. Hidden rather than deleted, so the state survives untouched if
+           a future build ever restores the feature another way. -->
       <div class="setting" style="display:none">
         <div class="row"><b>Pop-up verses while browsing</b>
           <label class="toggle"><input type="checkbox" id="setSiteEnabled"></label></div>
@@ -213,7 +251,9 @@
             <option value="pp">Psalms &amp; Proverbs</option>
             <option value="fav">My Favorites</option>
           </select></div>
-        <p>Choose Psalms &amp; Proverbs or Favorites to keep your plan's bookmark untouched while Verse of the Moment is on.</p>
+        <!-- WEB BUILD — the pop-up cards do not exist here, so the sentence
+             that described them has gone. -->
+        <p>This choice feeds the Verse of the Moment on this screen. Choose Psalms &amp; Proverbs or Gems of Light to keep your plan's bookmark still.</p>
       </div>
 
       <!-- v1.0.4: the prayer timer. It counts nothing and records nothing —
@@ -240,15 +280,35 @@
             <option value="120">+2 minutes</option>
             <option value="300">+5 minutes</option>
             <option value="600">+10 minutes</option>
+            <!-- v1.1.0, Ruling 95: the exception closes here. Order My Steps'
+                 row reaches +15 and DrawNigh's stopped at +10; one timer, one
+                 row, in both products again. -->
+            <option value="900">+15 minutes</option>
           </select></div>
         <div class="row" style="margin-top:8px"><span>When the time is up</span>
           <select id="setPrayChime">
             <option value="single">One soft chime</option>
             <option value="double">Two soft chimes</option>
+            <option value="three">Three soft chimes</option>
+            <option value="four">Four soft chimes</option>
+            <option value="five">Five soft chimes</option>
             <option value="off">Silence</option>
           </select></div>
+        <!-- Ruling 95: nine positions, as Order My Steps has carried since
+             Decision 67. A slider looks finer than it is; nine named steps are
+             a choice a man can actually make twice the same way. -->
         <div class="row" style="margin-top:8px"><span>Chime volume</span>
-          <input type="range" id="setPrayVol" min="0" max="100" step="5" style="width:120px"></div>
+          <select id="setPrayVol">
+            <option value="0">Silent</option>
+            <option value="0.15">1 — barely there</option>
+            <option value="0.25">2</option>
+            <option value="0.35">3</option>
+            <option value="0.45">4</option>
+            <option value="0.55">5 — ordinary</option>
+            <option value="0.7">6</option>
+            <option value="0.8">7</option>
+            <option value="1">8 — as loud as it goes</option>
+          </select></div>
         <div class="plan-actions"><button class="small-btn" id="btnPrayTest">Hear it</button></div>
         <p style="margin-top:6px">Quiet enough for a desk with someone sitting across it. If you are still praying when it sounds, stay praying — it is a notice, not a summons.</p>
         <!-- v1.0.9, Decision 91 + Ruling 96. The app states what it cannot do
@@ -267,8 +327,8 @@
       <!-- v1.0.4: dry-out. If no verse has been read for days the browsing card
            comes round sooner — timing only. It never changes which verses show,
            and any verse read in any mode puts it straight back to normal. -->
-      <!-- Web build: only ever affected the browsing pop-up card above, which
-           is hidden for the same reason. Hidden alongside it. -->
+      <!-- WEB BUILD — dead here. This only ever changed the timing of the
+           browsing card, which does not exist on a website. -->
       <div class="setting" style="display:none">
         <div class="row"><b>When it has been a while</b>
           <select id="setDryMins">
@@ -281,7 +341,9 @@
         <p>After a few days with nothing read, the browsing card comes round this often instead of the usual wait — one verse, in front of you, sooner. Read anything at all and it goes back to normal immediately.</p>
       </div>
 
-      <div class="setting">
+      <!-- WEB BUILD — dead here. It positions the browsing card, which a
+           website has no way to draw. -->
+      <div class="setting" style="display:none">
         <div class="row"><b>Verse card on this screen</b></div>
         <p>On a computer the browsing verse card can be dragged wherever you like, and stays there. On a phone it always sits at the bottom.</p>
         <div class="plan-actions">
@@ -297,15 +359,32 @@
              for loss — one phone, no second device anywhere, dead or stolen or
              site data cleared. Neither covers the other. The square is held
              for v1.1.0; a square is only a picture of a code. -->
+        <!-- v1.1.0 (v17, Decision 86): the third door. COPY serves a transfer
+             you are making now; SAVE THE FILE serves loss; SHOW THE SQUARE
+             serves two phones both in hand. Decision 97: the square holds the
+             plain code, so the other phone's own camera can read it even if
+             DrawNigh there cannot. -->
         <div class="plan-actions">
           <button class="small-btn gold" id="btnCopyBackup">Copy my backup code</button>
+          <button class="small-btn gold" id="btnShowSquare">Show the square</button>
           <button class="small-btn gold" id="btnSaveBackup">Save the file</button>
         </div>
         <div class="note" id="fileNote">A saved file survives a phone you no longer have. It goes wherever your browser puts downloads, and your phone may back it up to Google or iCloud — encrypted and useless to them, but there. That is why it survives.</div>
         <textarea id="backupBox" placeholder="Paste a backup code here (BB2.… or BB1.…)" style="margin-top:10px"></textarea>
         <div class="plan-actions">
+          <!-- v1.1.1, Decision 120 — the file door opened both ways. SAVE THE
+               FILE has existed since 1.0.9 and nothing could ever read one
+               back, so restoring from a saved file meant opening it and
+               copy-pasting seventeen hundred characters by hand. Decision 103
+               offers the file as "the easier road" above three squares, and
+               that road had no entrance. It only fills the box: nothing on this
+               device changes until the man chooses Merge or Replace himself. -->
+          <button class="small-btn gold" id="btnLoadFile">Load a file</button>
           <button class="small-btn gold" id="btnMerge">Merge</button>
           <button class="small-btn" id="btnRestore">Replace</button>
+          <!-- Decision 99: this button exists only if the phone answers with a
+               camera. A button that cannot work does not stand on the screen. -->
+          <button class="small-btn" id="btnScan" style="display:none">Scan a square</button>
         </div>
         <!-- Decision 77: the door never seals. Shown only while a claim stands. -->
         <div class="plan-actions" id="confessRow" style="display:none">
@@ -322,6 +401,65 @@
         <div class="note">(opens Google Forms — this leaves DrawNigh. The app itself still sends nothing anywhere.)</div>
       </div>
 
+      <!-- v1.1.0 (v18). The voice already in the phone — nothing downloaded,
+           nothing sent, and it works offline like everything else. -->
+      <div class="setting">
+        <div class="row"><b>🔊 Read aloud</b>
+          <label class="toggle"><input type="checkbox" id="setAudio"></label></div>
+        <p>Your phone's own voice reads the verse. Nothing is downloaded and nothing leaves the device. <b>A verse heard is a verse read</b> — it counts toward your day, your streak and your plan, exactly like reading with your eyes.</p>
+
+        <div class="row" style="margin-top:8px"><span>Stop at the end of each chapter</span>
+          <label class="toggle"><input type="checkbox" id="setAudioStop"></label></div>
+        <!-- Decision 107, and Decision 108 for the switch. The app states
+             plainly what turning it off means, and the choice is his. -->
+        <p id="audioStopNote">The chapter stop is here so a phone reading to an empty room stops on its own. Turn it off and the reading runs to the end of the book — and everything it reads is counted, heard or not.</p>
+
+        <div class="row" style="margin-top:8px"><span>Say the verse numbers</span>
+          <label class="toggle"><input type="checkbox" id="setAudioNums"></label></div>
+        <!-- WEB BUILD, settled 13 Sep 2026. The toggle is gone and the press is
+             the control. It stays in the page, hidden, because renderSettings()
+             and the change wiring both still reach for it — the same pattern as
+             the other rows that mean nothing here. Its old wording was written
+             for the add-on and was wrong besides: the reading does NOT stop
+             when the screen goes dark, it carries on like a music player. What
+             he wanted was the LIGHT kept on, so he can read along. -->
+        <div class="row" style="margin-top:8px; display:none"><span>Hold the screen awake while it reads</span>
+          <label class="toggle"><input type="checkbox" id="setAudioWake"></label></div>
+        <p><b>To keep the light on, press and hold the listen button.</b> An ordinary press reads aloud and lets the phone sleep — the voice carries on in the dark, which is what you want while cooking or driving. Hold the button instead and the screen stays lit for the whole sitting, through every chapter, until you stop the reading. Some browsers will not hold the screen; where that happens the app says so.</p>
+
+        <div class="row" style="margin-top:8px"><span>Speed</span>
+          <select id="setAudioRate">
+            <option value="0.7">Slow</option>
+            <option value="0.85">Unhurried</option>
+            <option value="1">Ordinary</option>
+            <option value="1.15">Brisk</option>
+            <option value="1.3">Quick</option>
+          </select></div>
+        <div class="row" id="voiceRow" style="margin-top:8px;display:none"><span>Voice</span>
+          <select id="setAudioVoice"></select></div>
+        <div class="note">Voice quality belongs to your device, not to DrawNigh. Two readers will not hear the same thing.</div>
+      </div>
+
+      <!-- v1.1.0 (The Secret Place v0.4 §3). In Settings, in plain sight, ON
+           PURPOSE. The feature was never hidden — only its entrance and its
+           contents. Its security is that nobody can get in, not that nobody
+           suspects. -->
+      <div class="setting">
+        <div class="row"><b>🚪 The Secret Place</b></div>
+        <!-- v1.1.4, Decision 162 — F37/F38. The old line read "A room inside
+             DrawNigh that only you can open", and a reader would fairly take
+             that to include the phone in his hand. It does not: the letters,
+             the door verse and the knock are ordinary readable text in this
+             device's own storage, and only the travelling backup code is
+             sealed. The app must never claim more than it does. -->
+        <p>A room inside DrawNigh, behind a verse you choose, a knock you choose and a word you choose. <b>The three locks guard this screen; the device itself is what guards the writing.</b> Anyone who can already read this phone's files can read what is in the room — what travels in your backup code is sealed, and that is the copy that gets pasted, photographed and emailed. <i>“But thou, when thou prayest, enter into thy closet, and when thou hast shut thy door, pray to thy Father which is in secret.”</i> — Matthew 6:6</p>
+        <div class="plan-actions" id="roomMakeRow">
+          <button class="small-btn gold" id="btnRoomMake">Make a room</button>
+          <button class="small-btn" id="btnRoomOpenSealed" style="display:none">Open the room in this code</button>
+        </div>
+        <div class="note" id="roomStatus"></div>
+      </div>
+
       <!-- v1.0.9, item 10 (v15.2 §3.4). The ladder's rungs run from five days
            to a year, so real use cannot reach them and the wording could never
            be seen before a reader saw it. Hidden on purpose: tap the James 4:8
@@ -329,7 +467,12 @@
            invent a debt, because the app has no concept of one. -->
       <div class="setting" id="ladderTestSetting" style="display:none">
         <div class="row"><b>🔧 Ladder test mode</b></div>
-        <p>Shows the offer that a real gap would produce. Nothing here counts, and the day log it writes is only what a reader would have read.</p>
+        <!-- v1.1.0, finding 4 — the promise is narrowed to what it means.
+             v1.0.9 said "Nothing here counts." The day log it writes does not,
+             but the OFFER it produces is real: accepting one took a live plan
+             from 47 verses a day to 1. The tool is kept, because seeing the
+             accept path is the point of it; the sentence is made true. -->
+        <p>Shows the offer that a real gap would produce. The day log it writes is only what a reader would have read, and nothing here touches your streak or your totals. <b>But the offer is a real offer</b> — accepting it changes your live plan's daily number, exactly as a real one would. <i>Put it back</i> on the plan card undoes it.</p>
         <div class="row" style="margin-top:8px"><span>Consecutive low days</span>
           <input type="number" id="ltDays" min="0" max="400" value="5" style="width:90px"></div>
         <div class="row" style="margin-top:8px"><span>Verses on each of them</span>
@@ -346,6 +489,7 @@
         <div class="row"><b>About &amp; Support</b></div>
         <p>DrawNigh — <i>Nearer to God, bit by bit.</i> King James Version. Free forever.<br>
         <span id="aboutLinks"></span></p>
+        <p class="note" id="aboutVersion"></p>
         <!-- v1.0.8: the same courtesy the suggestion box gets (v14.1 §3) — someone who
              chose an extension that collects nothing is told before the tap that the
              tap leaves it. Hidden entirely while LINKS.donate is empty. -->
@@ -380,7 +524,37 @@
       🏅 Badges, rank &amp; streak<span class="waiting-dot" id="badgeDot" style="display:none"></span>
     </button>
 
+    <!-- v16.1 §3.3 — called Seasons, not Archive: an item called Archive would
+         suggest the current season lives somewhere else, and it does not. -->
+    <button class="menu-item" id="miSeasons">🌱 Seasons</button>
+
     <button class="menu-item quiet" id="miClose">Close</button>
+  </div>
+</div>
+
+<!-- v1.1.0 (v16.1 §3): one season, one man. Set here or inside the room —
+     both write to the same place, because two answers to "what am I reaching
+     toward" would defeat the whole idea. Nothing is ever deleted. -->
+<div class="sheet" id="seasonSheet">
+  <div class="sheet-panel wide">
+    <div class="badge-head">
+      <div><b>Seasons</b><div class="note">What you are reaching toward. One at a time.</div></div>
+      <button class="small-btn" id="seasonClose">Close</button>
+    </div>
+    <div class="setting">
+      <div class="row"><b>This season</b></div>
+      <textarea id="seasonBox" placeholder="A few words. What is this stretch of your life for?"></textarea>
+      <div class="plan-actions">
+        <button class="small-btn gold" id="seasonSave">Set this season</button>
+        <button class="small-btn" id="seasonClear">End it</button>
+      </div>
+      <div class="note" id="seasonNote"></div>
+    </div>
+    <div class="badge-block">
+      <div class="badge-title">Former seasons</div>
+      <div class="note">Kept in order, dated. Nothing here is ever deleted.</div>
+      <div id="seasonPast"></div>
+    </div>
   </div>
 </div>
 
@@ -398,6 +572,439 @@
   </div>
 </div>
 
+<!-- v1.1.0 (v17): one square at a time, numbered, any order. The receiving
+     side names what is still missing — the worst outcome is a reader who
+     thinks he transferred and did not. -->
+<div class="sheet" id="squareSheet">
+  <div class="sheet-panel wide">
+    <div class="badge-head">
+      <div><b>Your backup code, as a square</b><div class="note" id="squareCount"></div></div>
+      <button class="small-btn" id="squareClose">Close</button>
+    </div>
+    <!-- v1.1.4, Decision 156 — F35. The square was drawn into a fixed card at
+         roughly three screen pixels a module, and a phone camera wants four or
+         five. That was the whole of F34's difficulty, and it costs nothing to
+         fix: more pixels per module, not fewer modules. Tapping it goes full
+         screen — heading, buttons and the bottom bar out of the way — for the
+         most modules-per-inch obtainable without adding a square. -->
+    <div class="square-wrap" id="squareWrap" title="Tap the square to fill the screen"><canvas id="squareCanvas" width="360" height="360"></canvas></div>
+    <div class="note" id="squareFull">Tap the square to fill the screen. Tap again to come back.</div>
+    <div class="plan-actions">
+      <button class="small-btn" id="squarePrev">‹ Back</button>
+      <button class="small-btn gold" id="squareNext">Next ›</button>
+    </div>
+    <!-- v1.1.4, Decision 155 — F34. Version 40 read on the phone, but only
+         just: 4x zoom and ten to fifteen seconds, and two of the three squares
+         refused until they were tried twice. Nobody is made to scan more
+         squares than he needs, and a man fighting his camera has a way out.
+         Opens on Fewest squares, which is today's behaviour exactly. -->
+    <div class="setting" style="margin-top:10px">
+      <div class="row"><b>If your camera is struggling</b></div>
+      <div class="mode-pills" id="squareModes">
+        <button class="pill on" data-sqmode="fewest">Fewest squares</button>
+        <button class="pill" data-sqmode="balanced">Balanced</button>
+        <button class="pill" data-sqmode="easiest">Easiest to scan</button>
+      </div>
+      <div class="note" id="squareModeNote"></div>
+    </div>
+    <div class="note" id="squareNote"></div>
+  </div>
+</div>
+
+<div class="sheet" id="scanSheet">
+  <div class="sheet-panel wide">
+    <div class="badge-head">
+      <div><b>Scan a square</b><div class="note" id="scanCount">Point this phone at the other one.</div></div>
+      <button class="small-btn" id="scanClose">Close</button>
+    </div>
+    <div class="square-wrap"><video id="scanVideo" playsinline muted></video></div>
+    <div class="note" id="scanNote"></div>
+  </div>
+</div>
+
+<!-- v1.1.0 — The Secret Place (v0.4). Write first, file after. Nothing is
+     asked of him at the door, and the page can be walked past: a man who comes
+     only to read four years of God's faithfulness back to himself is not a
+     lesser visitor. Nothing in here counts toward anything. -->
+<div class="sheet" id="roomSheet">
+  <div class="sheet-panel wide">
+    <div class="badge-head">
+      <div>
+        <!-- §13.1: the season is the HEADER here, with everything beneath it.
+             What he is reaching toward across everything he brings in. -->
+        <div class="room-season" id="roomSeason"></div>
+      </div>
+      <!-- v1.1.3, Decisions 135 + 143 — F29. Back and Close as a pair, side by
+           side, never stacked and never apart. A man reaching for the way back
+           and finding Close under his thumb is how a room gets shut on him. -->
+      <div class="head-pair">
+        <button class="small-btn" id="roomHeadBack" style="display:none">‹ Back</button>
+        <button class="small-btn" id="roomClose">Close</button>
+      </div>
+    </div>
+
+    <!-- v1.1.2, Decision 132 — a letter is the form everything here takes,
+         not one choice among four. Struggle and Testimony are things a letter
+         can carry, so they sit here, unclaimed, for as long as he is writing —
+         nothing is asked of him before he starts. -->
+    <div id="roomWrite">
+      <div class="file-marks file-marks-top">
+        <label><input type="checkbox" id="mkStruggle"> Struggle — something being carried</label>
+        <label><input type="checkbox" id="mkTestimony"> Testimony — what God did</label>
+      </div>
+      <textarea id="roomBox" placeholder="Say it. Nothing here is counted, scored or seen."></textarea>
+      <!-- v1.1.3, Decision 140 — type-ahead only helps a man who remembers how
+           the name starts. The button beside it shows him the whole list. -->
+      <div class="row" style="margin-top:8px"><span>Put it under (optional)</span>
+        <span class="cat-field">
+          <input type="text" id="mkCat" list="catList" placeholder="a name you choose">
+          <button type="button" class="small-btn" id="mkCatBrowse" title="See all your categories">All</button>
+        </span></div>
+      <div class="cat-picker" id="mkCatPicker" style="display:none"></div>
+      <div class="plan-actions">
+        <button class="small-btn gold" id="roomKeep">Keep this</button>
+        <button class="small-btn" id="roomToList">Just reading today</button>
+      </div>
+      <div class="note" id="roomWriteNote"></div>
+    </div>
+
+    <div id="roomList" style="display:none">
+      <div class="plan-actions">
+        <button class="small-btn gold" id="roomNew">Write something</button>
+        <button class="small-btn" id="roomBadges" style="display:none">🏅 Badges</button>
+        <button class="small-btn" id="roomSettingsBtn">Settings</button>
+      </div>
+      <div id="roomCats"></div>
+    </div>
+
+    <div id="roomThread" style="display:none">
+      <div id="roomEntries"></div>
+    </div>
+
+    <div id="roomAdmin" style="display:none">
+
+
+      <div class="setting">
+        <div class="row"><b>This season</b></div>
+        <textarea id="roomSeasonBox" placeholder="What are you reaching toward?"></textarea>
+        <div class="plan-actions"><button class="small-btn gold" id="roomSeasonSave">Set it</button></div>
+        <div class="note">The same season you would set in Settings. One man, one season.</div>
+      </div>
+
+      <!-- §12: the reminder exists because §7 has none. A combination unused
+           for months is a combination lost, and there is nobody to ask. -->
+      <div class="setting">
+        <div class="row"><b>A reminder, every three days</b>
+          <label class="toggle"><input type="checkbox" id="remOn"></label></div>
+        <p>It must be something only <i>you</i> can read as a reminder. <b>If it needs to be strange to work, it is the wrong words.</b> A verse reference on the main screen of a Bible app is furniture — but chosen because of what it says, it means one thing to you and nothing to anyone else.</p>
+        <input type="text" id="remText" placeholder="Psalm 27:5 — or a few words of your own">
+        <div class="plan-actions"><button class="small-btn gold" id="remSave">Keep it</button></div>
+      </div>
+
+      <div class="setting">
+        <div class="row"><b>Badges</b>
+          <select id="roomBadgeChoice">
+            <option value="room">In this room</option>
+            <option value="menu">In the ⋮ menu</option>
+            <option value="both">Both</option>
+          </select></div>
+      </div>
+
+      <!-- v1.1.2, F15 (Decision 126) — the last three of the six things §6/§14
+           name as changed from inside only. Existing letters are unaffected
+           by any of the three; each is read back once, exactly as at the
+           making, and never shown again. -->
+      <div class="setting">
+        <div class="row"><b>The door, the knock, the word</b></div>
+        <div class="note">Changed from inside only, the same as everything else here.</div>
+        <div class="plan-actions">
+          <button class="small-btn" id="roomChangeDoor">Change the door verse</button>
+          <button class="small-btn" id="roomChangeKnock">Change the knock</button>
+          <button class="small-btn" id="roomChangeWord">Change the word</button>
+          <!-- v1.1.4, Decision 158 — one pass for all three. "there should be a
+               place for all reset where you change word, verse and knock at once
+               instead of doing them one after the other like we have now." -->
+          <button class="small-btn gold" id="roomChangeAll">Change all three</button>
+        </div>
+      </div>
+
+      <!-- v1.1.4, Decisions 167 + 171 — ONE sealed door, in two parts, behind
+           the word. A sealed letter leaves its list completely: no row holding
+           its place, no count at the foot of the category, no trace. In
+           Dickson's words: "GONE COMPLETELY — ONLY WHEN YOU CLICKED SEALED AND
+           INPUT THE WORD (PASSWORD) THEN YOU CAN SEE THE LIST OF SEALED
+           LETTERS. BUT WITHIN THE LETTERS, NOTHING REMINDS YOU OF ANY SEALED
+           LETTER." So this is the only place either kind exists, and the word
+           stands at its door rather than at each thing inside it. -->
+      <div class="setting">
+        <div class="row"><b>Sealed</b></div>
+        <div class="note">Put away, not thrown away. Nothing you wrote is destroyed by a tap on a bad day, and nothing here can be deleted until three months in the seal.</div>
+        <div class="plan-actions" id="roomSealedGate">
+          <button class="small-btn" id="roomSealedOpen">Open with my word</button>
+        </div>
+        <div id="roomSealedBody" style="display:none">
+          <div class="row" style="margin-top:6px"><b>Sealed categories</b></div>
+          <div id="roomSealed"></div>
+          <div class="row" style="margin-top:10px"><b>Sealed letters</b></div>
+          <div id="roomSealedLetters"></div>
+        </div>
+      </div>
+
+      <!-- §7: no reset link, no recovery code, no back door. It is not a
+           feature DrawNigh declined; it is a thing DrawNigh cannot do. -->
+      <div class="setting">
+        <div class="row"><b>Start again</b></div>
+        <div class="note">This closes the room and everything in it. There is no recovery and nobody can undo it for you.</div>
+        <div class="plan-actions"><button class="small-btn" id="roomReset">Close this room for good</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- v1.1.2, Decision 132 — shown only when Keep is pressed with neither mark
+     ticked and no category named (a chance to refile before it saves, not a
+     gate in front of writing), and reused when an entry's own "Filed as..."
+     button is pressed later. Dismissible for good, once he no longer needs it. -->
+<div class="overlay" id="fileOverlay">
+  <div class="card">
+    <h3 id="foTitle">Filed as a letter.</h3>
+    <div class="note" id="foNote"></div>
+    <div class="file-marks">
+      <label><input type="checkbox" id="foStruggle"> Struggle — something being carried</label>
+      <label><input type="checkbox" id="foTestimony"> Testimony — what God did</label>
+    </div>
+    <div class="row" style="margin-top:8px"><span>Put it under</span>
+      <span class="cat-field">
+        <input type="text" id="foCat" list="catList" placeholder="a name you choose">
+        <button type="button" class="small-btn" id="foCatBrowse" title="See all your categories">All</button>
+      </span></div>
+    <div class="cat-picker" id="foCatPicker" style="display:none"></div>
+    <div class="row" id="foDontAskRow" style="margin-top:8px"><span>Don't ask me this again</span>
+      <label class="toggle"><input type="checkbox" id="foDontAsk"></label></div>
+    <!-- v1.1.4, Decision 146 — F31. This screen used to carry Done and nothing
+         else, and the letter was already written by the time it opened: "after
+         writing and i click keep this, but later decide not to save it, there is
+         no back or cancel button to take me back to writing." Both halves are
+         fixed — nothing is written until Done, and Back returns to the writing
+         with every word still there. No throw-away button, deliberately: with
+         nothing written until Done, walking away IS the delete. -->
+    <div class="actions">
+      <button class="nav-btn next" id="foDone">Done</button>
+      <button class="nav-btn" id="foBack">‹ Back</button>
+    </div>
+  </div>
+</div>
+
+<!-- The third lock. It does not exist until the verse and the knock are both
+     right — a PIN box that appeared on a wrong knock would announce the room
+     as loudly as a padlock. -->
+<div class="overlay" id="pinOverlay">
+  <div class="card">
+    <h3 id="pinTitle">Your word</h3>
+    <!-- v1.1.4, Decision 151 — the same reveal as every other word box. -->
+    <span class="pin-field">
+      <input type="password" id="pinBox" placeholder="••••">
+      <button type="button" class="small-btn" id="pinShow" title="Show the word">Show</button>
+    </span>
+    <!-- The words of the door verse, always offered, whatever shape the owner
+         chose. A panel that asked differently would announce which of the three
+         a stranger was facing; identical for everyone, it announces nothing.
+         Anyone reading this has already passed the verse and the knock, so the
+         verse itself is no longer a secret from him. -->
+    <div class="word-chips" id="pinWords" style="display:none"></div>
+    <div class="note" id="pinNote"></div>
+    <div class="note" id="pinHint" style="display:none"></div>
+    <div class="actions">
+      <button class="nav-btn next" id="pinGo">Enter</button>
+      <button class="nav-btn" id="pinCancel">Not now</button>
+    </div>
+  </div>
+</div>
+
+<!-- Making the room. The warning is shown ONCE, before the word is set. -->
+<div class="overlay" id="makeOverlay">
+  <div class="card">
+    <h3 id="makeTitle">Make a room</h3>
+    <div class="note" id="makeNote"></div>
+    <div id="makeStep1">
+      <p class="screen-note">Choose the verse that is your door. Any verse in the KJV — one of 31,100, and nothing will mark it.</p>
+      <div id="makePicker">
+        <select id="mkBook"></select><select id="mkChap"></select><select id="mkVerse"></select>
+      </div>
+    </div>
+    <!-- v1.1.1, Decisions 114/116/117 — the knock is a NUMBER. Whole seconds,
+         counted on the running clock, so it can be remembered and aimed at.
+         The felt rhythm it replaces locked its own author out within minutes. -->
+    <div id="makeStep2" style="display:none">
+      <p class="screen-note">Now the knock, and it is a <b>number</b>. <b>4567</b> means: let the prayer clock run <b>4</b> seconds and pause it · run <b>5</b> and pause · run <b>6</b> and pause · run <b>7</b> and pause. Three to six digits, each between 1 and 9.</p>
+      <input type="text" id="mkKnockNum" inputmode="numeric" autocomplete="off" placeholder="4567" maxlength="6">
+      <div class="row"><span>Counting starts</span>
+        <select id="mkKnockStart">
+          <option value="prayer">When the prayer starts</option>
+          <option value="pause">After my first pause</option>
+        </select></div>
+      <div class="note">Nobody but you knows which of the two you chose. Starting after your first pause also lets you reach the room in the middle of a prayer you are already praying.</div>
+      <div class="row"><span>Let me be out by</span>
+        <select id="mkKnockTol">
+          <option value="1">1 second</option>
+          <option value="2">2 seconds</option>
+          <option value="3">3 seconds</option>
+        </select></div>
+      <div class="note" id="mkKnockWarn"></div>
+      <div class="note" id="mkKnockWarn2"></div>
+      <p class="screen-note">When the last pause is done, <b>resume the prayer and simply pray.</b> After <b>five unbroken seconds</b> the word panel appears. Do not tap again — a man tapping his way in never stops, and that is exactly what keeps him out.</p>
+      <div class="knock-pad" id="knockPad">Tap to practise — the seconds run here</div>
+      <div class="note" id="mkKnockNote"></div>
+    </div>
+    <div id="makeStep3" style="display:none">
+      <!-- v1.1.4, Decision 163 — F37/F41. This paragraph used to treat all
+           three locks alike: "If you forget, you forget." That is true only of
+           the WORD. The verse and the knock are both changeable from inside,
+           and a backup code steps past both — it carries them within its seal,
+           so a device restoring one asks for the word alone. Dickson lost three
+           days to that gap, with the answer in his own drawer. The warning is
+           split at the place it belongs: while a man is choosing what to write
+           down, not after he is already locked out. -->
+      <p class="screen-note"><b>The word is the one nobody can ever recover.</b> Not the app, not anyone. No reset link, no recovery code, no back door — the same thing that means no server and no surveillance means no rescue. <b>Forget the word and the room is closed for good.</b></p>
+      <!-- WEB ONLY, settled 13 Sep 2026. The add-on keeps the room in storage
+           that belongs to the add-on. A website keeps it in ordinary browser
+           storage, which a phone clears far more casually — and the room has no
+           recovery by design. His own rule: say what the app cannot do. -->
+      <p class="screen-note"><b>This room lives in your browser's own storage.</b> Clearing your browsing data removes it, and a phone short on space can remove it too. <b>Your backup code is the only copy that survives that.</b></p>
+      <p class="screen-note">Your <b>verse</b> and your <b>knock</b> are a different matter. Both can be changed from inside the room, and <b>a backup code gets you past either one</b> — they travel inside its seal, so a device restoring your code asks for the word alone. <b>That is what a backup code is for. Make one, and keep it.</b></p>
+      <!-- Decision 119 — three shapes, and which one is in use is itself a
+           secret. The panel at the door looks identical whichever it is. -->
+      <div class="row"><span>My word is</span>
+        <select id="mkWordShape">
+          <option value="door">A word from my door verse</option>
+          <option value="kjv">A word from some other verse</option>
+          <option value="typed">Something I type</option>
+        </select></div>
+      <div class="note" id="mkWordNote"></div>
+      <div class="word-chips" id="mkWordChips" style="display:none"></div>
+      <!-- v1.1.2, Decision 128 — the vault. Independent of the shape above:
+           a bare box never proves the word was typed, because it might belong
+           to any of the three shapes with the words simply turned off. -->
+      <div class="row"><span>Show the words on the panel</span>
+        <select id="mkShowWords">
+          <option value="yes">Yes — offer them as taps</option>
+          <option value="no">No — a bare box only</option>
+        </select></div>
+      <div class="note" id="mkVaultNote" style="display:none">With the words off and no hint, a forgotten word is gone for good. Nothing leaves this device, nothing is stored anywhere, and there is no one to ask. Only you — and God — can know it.</div>
+      <!-- v1.1.4, Decision 151 — the reveal. The whole of F18 began because a
+           man could never read his own word: it was tapped from chips into a
+           masked box, and when the door moved the chip was gone. Dots by
+           default; the tap is his own choice. -->
+      <span class="pin-field">
+        <input type="password" id="mkPin" placeholder="Your word">
+        <button type="button" class="small-btn" id="mkPinShow" title="Show the word">Show</button>
+      </span>
+      <span class="pin-field">
+        <input type="password" id="mkPin2" placeholder="Again">
+      </span>
+      <!-- v1.1.3, F25/F18 — said where the word is set, because the box is
+           masked and a man cannot check afterwards what he put in it. -->
+      <div class="note">Capital letters do not matter, and spaces at either end are ignored. The word you set is the word you type, however you happen to type it.</div>
+      <input type="text" id="mkHint" autocomplete="off" placeholder="A hint, in your own words (optional)">
+      <div class="note">The hint is shown only after two wrong words, on a panel nobody reaches without your verse and your knock. Make it something that means one thing to you and nothing to anyone else — a verse reference does this well.</div>
+    </div>
+    <!-- Shown ONCE, after the room is sealed. Never again: if Settings could
+         redisplay it, anyone holding the unlocked phone would read the key. -->
+    <div id="makeStep4" style="display:none">
+      <p class="screen-note">Read this once. <b>It will never be shown again.</b></p>
+      <div class="reveal" id="mkReveal"></div>
+      <!-- v1.1.4, Decision 165 — one deliberate act the man marks himself. It
+           is the single moment in the whole app where a tick can actually save
+           someone: Dickson forgot his own knock in three days, and got it back
+           only because it happened to be in a chat. -->
+      <label class="edit-tick" id="mkWroteRow">
+        <input type="checkbox" id="mkWrote">
+        <span>I have written these down somewhere safe.</span>
+      </label>
+      <div class="note" id="mkWroteNote"></div>
+    </div>
+    <!-- v1.1.4, Decision 164 — the reminder becomes a step at the end of the
+         making, offered with §12's own reasoning and skippable. It lives in the
+         room's Settings and starts off, and Dickson had a room for three days
+         without ever seeing the switch. A reader will not go looking for a
+         setting he was never shown. -->
+    <div id="makeStep5" style="display:none">
+      <p class="screen-note"><b>One last offer, and you can skip it.</b> There is no recovery here — a combination unused for months is a combination lost, and there is nobody to ask. So the room can put a quiet reminder in front of you <b>every three days</b>.</p>
+      <p class="screen-note">It must be something only <i>you</i> can read as a reminder. <b>If it needs to be strange to work, it is the wrong words.</b> A verse reference on the main screen of a Bible app is furniture — chosen because of what it says, it means one thing to you and nothing to anyone else.</p>
+      <input type="text" id="mkRemText" autocomplete="off" placeholder="Psalm 27:5 — or a few words of your own">
+      <div class="note">This can be turned on, changed or turned off at any time, inside the room's own Settings.</div>
+    </div>
+    <div class="actions">
+      <button class="nav-btn next" id="makeNext">Next</button>
+      <button class="nav-btn" id="makeBack" style="display:none">‹ Back</button>
+      <button class="nav-btn" id="makeStartAgain" style="display:none">Start again</button>
+      <button class="nav-btn" id="makeCancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- v1.1.4, Decision 144 — the room's questions are asked by the room. A grey
+     system box headed with the add-on's name (or, on the web, a web address) is
+     visibly the browser's and not this room's, and it even offers to stop the
+     page making more of them — which on a page holding a man's letters to God
+     reads as a fault. The same reasoning as Decision 134's inline editor. -->
+<div class="overlay" id="askOverlay">
+  <div class="card">
+    <h3 id="askTitle"></h3>
+    <div class="note" id="askText"></div>
+    <div class="actions">
+      <button class="nav-btn next" id="askGo">Yes</button>
+      <button class="nav-btn" id="askNo">Not now</button>
+    </div>
+  </div>
+</div>
+
+<!-- v1.1.4, Decision 150 — F33 and F39. The backup door used to ask for the
+     word in a browser prompt(), in the clear, and then handed whatever was
+     typed straight to the seal WITHOUT EVER CHECKING IT. Two costs: a mistyped
+     word sealed the room under the typo, silently; and anyone holding the
+     unlocked phone could open Settings, press Copy my backup code, type any
+     word he liked, and walk away with every letter, the door verse and the
+     knock, sealed under a word HE chose. He never needed the owner's.
+     So: DrawNigh's own box, dots by default with a tap to reveal, and the word
+     checked against the room before anything is sealed. -->
+<div class="overlay" id="bkOverlay">
+  <div class="card">
+    <h3>Your word</h3>
+    <div class="note">Your room travels inside this code, sealed with your word. Nothing is sealed until the word is checked against the room.</div>
+    <span class="pin-field">
+      <input type="password" id="bkPin" placeholder="Your word">
+      <button type="button" class="small-btn" id="bkPinShow" title="Show the word">Show</button>
+    </span>
+    <div class="note" id="bkNote"></div>
+    <div class="actions">
+      <button class="nav-btn next" id="bkGo">Seal the room into the code</button>
+      <button class="nav-btn" id="bkPlain">A code without the room</button>
+      <button class="nav-btn" id="bkCancel">Not now</button>
+    </div>
+  </div>
+</div>
+
+<!-- v1.1.4, Decisions 157 + 159 + 163 — the moment a restored room opens. The
+     one-off bypass is spent and the ordinary door is back, and this is the only
+     screen in the app that has ever said so. NOTHING IS DISPLAYED: an earlier
+     form of this read the door and knock back on screen and Dickson ruled
+     against it — "showing him again is not good. what if he remembers it or is
+     currently in a public space." A restore happens on a new phone, in a shop
+     or on a bus, which is exactly where a knock on screen is read over a
+     shoulder. The remedy is to prompt the change, not to display the secret. -->
+<div class="overlay" id="restoredOverlay">
+  <div class="card">
+    <h3>That was a one-off</h3>
+    <p class="screen-note">From here you come in by <b>your verse, your knock and your word</b> — the ones that were inside this code. The door is mended and this device knows where it is again.</p>
+    <p class="screen-note"><b>If you do not know all three, set a new door now.</b> Otherwise this code stays your only way in, and if you lose it you lose the room.</p>
+    <div class="actions">
+      <button class="nav-btn next" id="restoredSet">Set a new door now</button>
+      <button class="nav-btn" id="restoredKeep">I know them — keep them</button>
+    </div>
+  </div>
+</div>
+
 <!-- v1.0.4: badges. Discovered, never announced — no banner ever covers a verse. -->
 <div class="sheet" id="badgeSheet">
   <div class="sheet-panel wide">
@@ -405,17 +1012,23 @@
          not dismissible. The ladders below are a description of the road, not a
          reward for progress — and this is the frame that makes them safe to
          show in full. God at the top; other men at the foot. -->
-    <div class="inscription">
-      <div class="inscription-line">PRESENCE OVER PERFORMANCE</div>
-      <div class="inscription-note">No number here makes a man nearer to God than another. He draws nigh to whoever draws nigh to Him.</div>
-    </div>
-
-    <div class="badge-head">
-      <div>
-        <button class="rank-name ladder-open" id="bRank" data-ladder="rank">Recruit</button>
-        <div class="note" id="bRankNote"></div>
+    <!-- v1.1.1, finding F3 — the inscription and Close stay put while the rest
+         scrolls. They scrolled away in 1.0.9 too, so this is a standing fault
+         rather than a regression, but the sheet only ever gets longer. A Close
+         button a man has to scroll back up to find is a door that sticks. -->
+    <div class="sheet-head">
+      <div class="inscription">
+        <div class="inscription-line">PRESENCE OVER PERFORMANCE</div>
+        <div class="inscription-note">No number here makes a man nearer to God than another. He draws nigh to whoever draws nigh to Him.</div>
       </div>
-      <button class="small-btn" id="bClose">Close</button>
+
+      <div class="badge-head">
+        <div>
+          <button class="rank-name ladder-open" id="bRank" data-ladder="rank">Recruit</button>
+          <div class="note" id="bRankNote"></div>
+        </div>
+        <button class="small-btn" id="bClose">Close</button>
+      </div>
     </div>
 
     <div class="badge-block">
@@ -437,9 +1050,14 @@
 
     <!-- v1.0.9, Decision 88 / v16.1 §2.1 — a date says something happened,
          a rank says where you stand. This is the first kind. -->
+    <!-- v1.1.1, Decisions 113 and 115. It was an archive that grew to a
+         hundred rows and repeated what the book card, the streak and the rank
+         already say. It is now the last five, across the whole journey — and
+         the date says BANKED, because the app cannot know when a book was
+         finished and will not pretend it does. -->
     <div class="badge-block" id="bMilestones" style="display:none">
-      <div class="badge-title">Milestones</div>
-      <div class="note">When each of these was reached.</div>
+      <div class="badge-title">The last five you banked</div>
+      <div class="note">When each was banked. Older ones are kept, and are not shown here.</div>
       <div id="bMilestoneList"></div>
     </div>
 
@@ -527,17 +1145,26 @@
   </div>
 </div>
 
+<!-- v1.1.0 (Decision 100): vendored, unminified, readable source. Neither
+     assigns markup, so the linter's list is unchanged. MIT, both of them. -->
+<!-- v1.1.2, Decision 132 item 3 — his own named categories are OFFERED, not
+     remembered and retyped. Filled from the room at open time; nothing is
+     written into it as markup. -->
+<datalist id="catList"></datalist>
+
+<script src="qrcode.js"></script>
+<script src="jsqr.js"></script>
 <script src="engine.js"></script>
 <script src="app.js"></script>
+<!-- WEB BUILD — the service worker is what lets the app open with no signal.
+     Registered after the app itself, and its failure is never allowed to stop
+     the reading: a phone that refuses it still reads, it just needs the net. -->
 <script>
-// Keeps the app usable offline and lets it be added to a Home Screen like a
-// real app. If registration fails for any reason, the app still works —
-// it just won't be available offline.
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', function () {
-    navigator.serviceWorker.register('sw.js').catch(function () {});
-  });
-}
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js').catch(function () {});
+    });
+  }
 </script>
 </body>
 </html>

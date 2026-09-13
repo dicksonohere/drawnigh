@@ -162,12 +162,52 @@
     if (state.gems === undefined)        state.gems = [];          // ⚡ Gems of Light
     if (state.gapClaim === undefined)    state.gapClaim = null;    // an honest claim, still confessable
     if (state.milestones === undefined)  state.milestones = [];    // dated record of tiers reached
+    // v1.1.0
+    if (state.markAt === undefined)      state.markAt = {};        // the day a ⚡ or ♥ was made
+    if (state.seasons === undefined)     state.seasons = { now: null, past: [] };
+    if (state.room === undefined)        state.room = null;        // The Secret Place, sealed
+    if (state.audioRun === undefined)    state.audioRun = null;    // where a reading aloud had reached
     seedLapFromHistory(state);                                     // v1.0.6
+    repairCatchUpLaps(state);                                      // v1.1.0, finding 6
     // v1.0.9: history starts when dates start. Everything already earned on the
     // day this lands is the baseline and never gets a date — no backfill, no
     // undated entries, no fill-in screen. Only what is reached from now is dated.
     if (state.msBase === undefined)      state.msBase = earnedBadges(state);
     return state;
+  }
+
+  /* v1.1.0 — repairing what finding 6 already cost.
+     Fixing catchUpApply stops the loss from here on; it cannot give back a
+     completion that was never banked. This does, and only where it is provably
+     safe: a book whose every verse is in globalRead but which has never been
+     banked at all. seedLapFromHistory already banked every complete book once
+     (and set lapSeeded), so after that a fully-read book carries a completion —
+     unless a Catch me up finished it and the lap never heard about it.
+     A book already banked is left alone: its lap was cleared on purpose, and a
+     partial lap there is a second reading in progress, not damage.
+     Once only, and the flag is what guarantees it. */
+  function repairCatchUpLaps(state) {
+    if (state.lapRepaired) return 0;
+    state.lapRepaired = true;
+    if (!state.lapSeeded) return 0;          // seeding has not run yet; it will bank them
+    var g = bitsFromB64(state.globalRead, TOTAL_VERSES), fixed = 0;
+    for (var b = 0; b < 66; b++) {
+      if ((state.completions && state.completions[b]) > 0) continue;
+      var r = bookRange(b), whole = true, i;
+      for (i = r[0]; i < r[1]; i++) { if (!bitGet(g, i)) { whole = false; break; } }
+      if (!whole) continue;
+      /* Banked directly, not by walking lapMark over the book: lapMark clears
+         the lap the moment the book fills, so the remaining calls would write
+         the cleared verses straight back in and leave a part-read book behind.
+         (It did exactly that on the first attempt — 816 of Genesis left in a
+         lap that should have been empty.) One bank, one clear. */
+      var lap = bitsFromB64(state.lap, TOTAL_VERSES);
+      for (i = r[0]; i < r[1]; i++) bitClear(lap, i);
+      state.lap = b64FromBits(lap);
+      state.completions[b] = (state.completions[b] || 0) + 1;
+      fixed++;
+    }
+    return fixed;
   }
 
   // ---------- v1.0.6: crediting reading done before badges existed ----------
@@ -759,13 +799,43 @@
     for (var i = 0; i < g.length; i++) if (g[i][0] === b && g[i][1] === c && g[i][2] === v) return true;
     return false;
   }
-  function toggleGem(state, b, c, v) {
+  /* v1.1.0, finding 2 — the day a mark was made.
+     v1.0.9 kept marks as bare [b,c,v] in two arrays, so the ONE list it
+     promised could only ever be two blocks: order was known inside each array
+     and unknown between them. A verse marked minutes ago could sit ninth,
+     below eight older hearts — the exact retrieval problem Gems exists to
+     solve (v16.1 §1).
+     The mark now records its own day. Kept in a separate map rather than a
+     fourth element, because the triples are joined as keys in three places and
+     a fourth element would quietly change every one of them. */
+  function markKey(kind, b, c, v) { return kind + '|' + b + ':' + c + ':' + v; }
+  /* The MOMENT, not the day.
+     A first cut stored the day only, and every mark made on one day tied — so
+     the sort fell back to which array happened to be walked first, and the two
+     stacked drawers came straight back for anything marked today. A man marks a
+     dozen verses in one sitting; the day cannot tell them apart. Found in a
+     screenshot of the real list, not by a check. */
+  function markStamp(state, kind, b, c, v, now) {
+    if (!state.markAt) state.markAt = {};
+    state.markAt[markKey(kind, b, c, v)] = (now ? new Date(now) : new Date()).getTime();
+  }
+  function markUnstamp(state, kind, b, c, v) {
+    if (state.markAt) delete state.markAt[markKey(kind, b, c, v)];
+  }
+  function markDate(state, kind, b, c, v) {
+    return (state.markAt && state.markAt[markKey(kind, b, c, v)]) || null;
+  }
+
+  function toggleGem(state, b, c, v, now) {
     if (!state.gems) state.gems = [];
     for (var i = 0; i < state.gems.length; i++) {
       var f = state.gems[i];
-      if (f[0] === b && f[1] === c && f[2] === v) { state.gems.splice(i, 1); return false; }
+      if (f[0] === b && f[1] === c && f[2] === v) {
+        state.gems.splice(i, 1); markUnstamp(state, 'g', b, c, v); return false;
+      }
     }
     state.gems.push([b, c, v]);
+    markStamp(state, 'g', b, c, v, now);
     return true;
   }
 
@@ -910,6 +980,19 @@
       if (!seen[r.join(',')]) { out.favorites.push(r.slice()); seen[r.join(',')] = 1; }
     });
 
+    /* v1.1.0, finding 5 — found by a test written for finding 3.
+       v1.0.9 shipped Gems of Light and taught mergeStates nothing about them,
+       so ⚡ marks made on the other phone were silently dropped by a Merge —
+       the one path the app describes as "nothing was lost". A ♥ survived and a
+       ⚡ did not, which is the same drawer fault as finding 2 wearing a
+       different coat. Unioned exactly like favourites. */
+    var gseen = {};
+    out.gems = (out.gems || []).slice();
+    out.gems.forEach(function (r) { gseen[r.join(',')] = 1; });
+    (theirs.gems || []).forEach(function (r) {
+      if (!gseen[r.join(',')]) { out.gems.push(r.slice()); gseen[r.join(',')] = 1; }
+    });
+
     // Plans — matched by name + scope + size, never by id alone, since two
     // devices number their plans independently.
     (theirs.plans || []).forEach(function (tp) {
@@ -936,6 +1019,56 @@
         if (tap && samePlan(out.plans[j], tap)) { out.activePlanId = out.plans[j].id; break; }
       }
     }
+    /* v1.1.0, finding 3 — milestones must not be backfilled by a merge.
+       v1.0.9 unioned the reading but left msBase as THIS device's baseline.
+       The merge then earned badges this device had never earned, none of them
+       in the baseline, and recordMilestones stamped every one of them with
+       today's date — dating Acts and Romans to the day of the merge when they
+       were finished weeks earlier on the other phone.
+       A merge cannot know when the other device reached something. So it never
+       guesses: dated records from either side are kept as they stand, and
+       anything the merge newly earns joins the BASELINE undated. That is
+       v16.1 §2.1's own rule — no backfill — applied to the path that missed it.
+       Replace was always clean, because migrate() seeds msBase from scratch. */
+    var ms = {}, k2;
+    (mine.milestones || []).concat(theirs.milestones || []).forEach(function (m) {
+      if (!m || !m.id) return;
+      if (!ms[m.id] || (m.date && m.date < ms[m.id].date)) ms[m.id] = { id: m.id, date: m.date };
+    });
+    out.milestones = [];
+    for (k2 in ms) out.milestones.push(ms[k2]);
+    out.milestones.sort(function (a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
+
+    var base = {};
+    (mine.msBase || []).concat(theirs.msBase || []).forEach(function (id) { base[id] = 1; });
+    earnedBadges(out).forEach(function (id) { if (!ms[id]) base[id] = 1; });
+    out.msBase = Object.keys(base);
+
+    // The day a mark was made travels with it, and the earliest known day wins
+    // — a verse is not newly marked because a second device met it later.
+    out.markAt = {};
+    [mine.markAt || {}, theirs.markAt || {}].forEach(function (src) {
+      for (var mk in src) {
+        if (!out.markAt[mk] || src[mk] < out.markAt[mk]) out.markAt[mk] = src[mk];
+      }
+    });
+
+    // Seasons: one man, one season. The season standing on this device is kept,
+    // and every former season from either device is preserved, dated, unduplicated.
+    out.seasons = mergeSeasons(mine.seasons, theirs.seasons);
+
+    /* The Secret Place never merges. A room is opened by its own three locks or
+       not at all, and two rooms cannot be reconciled by a machine that can read
+       neither. This device's room stands.
+
+       v1.1.4, Decision 153 — but where there is NO room on this device there is
+       nothing to reconcile, and dropping the one in the code threw away the
+       whole room for no reason. A man merging his reading onto a new phone lost
+       his letters silently. So: this device's room wins if it has one; if it has
+       none, the room in the code comes across, still sealed, and Settings offers
+       it exactly as a restore does. */
+    out.room = mine.room || theirs.room || null;
+
     // Settings stay this device's own — card position and pop-up timing
     // belong to the device, not to the reading.
     return out;
@@ -1038,6 +1171,18 @@
     var g = bitsFromB64(state.globalRead, TOTAL_VERSES);
     for (var m = 0; m < marked.length; m++) bitSet(g, marked[m]);
     state.globalRead = b64FromBits(g);
+
+    /* v1.1.0, finding 6 — reported by Dickson, 5 September.
+       THE LAP WAS NEVER MARKED HERE. countRead() calls lapMark() for every
+       verse; catchUpApply() wrote globalRead and the plan and stopped. The lap
+       is the record that banks a completion (lapMark clears the book and adds
+       to completions when it fills), so a book finished with Catch me up was
+       complete in globalRead, complete in the plan, and STILL SHOWED "not yet
+       drawn" — no First Draw, no Well tier, no rank movement.
+       In Dickson's own data: Genesis 1533/1533 in globalRead, 1446/1533 in the
+       lap. The 87 verses he caught up on were the ones missing.
+       Present since v1.0.4, when the lap was introduced. */
+    for (var lm = 0; lm < marked.length; lm++) lapMark(state, marked[lm]);
     for (var i = 0; i < state.plans.length; i++) {
       var other = state.plans[i];
       if (other.id === planId || !other.countEverything) continue;
@@ -1057,6 +1202,16 @@
       creditDay(state, pv.count, now);
       planCreditToday(plan, pv.count, now);                    // v9
     }
+    /* v1.1.3, F30 — reported by Dickson, 7 September, reproduced twice.
+       The same shape of fault as v1.1.0's finding 6 directly above, one step
+       further along. That one fixed the LAP, so a book caught up on stopped
+       saying "not yet drawn". But the dated record is written by
+       recordMilestones(), which the reading path calls after every counted
+       verse and this path never called at all — so Exodus took its First Draw
+       on the book card and never appeared in "the last five you banked".
+       Banked here rather than at the caller, so every way into catch-up gets
+       it, exactly as lapMark is handled above. */
+    recordMilestones(state, now);
     return pv.count;
   }
 
@@ -1069,13 +1224,54 @@
     }
     return false;
   }
-  function toggleFavorite(state, b, c, v) {
+  function toggleFavorite(state, b, c, v, now) {
     for (var i = 0; i < state.favorites.length; i++) {
       var f = state.favorites[i];
-      if (f[0] === b && f[1] === c && f[2] === v) { state.favorites.splice(i, 1); return false; }
+      if (f[0] === b && f[1] === c && f[2] === v) {
+        state.favorites.splice(i, 1); markUnstamp(state, 'f', b, c, v); return false;
+      }
     }
     state.favorites.push([b, c, v]);
+    markStamp(state, 'f', b, c, v, now);
     return true;
+  }
+
+  /* One row per verse, newest first — the single list v16.1 §1 asked for.
+     A row carrying both marks takes the newer of the two.
+     Marks made before v1.1.0 carry no date and cannot be given one; the app
+     does not invent what it does not know. They sort below every dated mark,
+     and among themselves a ⚡ outranks a bare ♥ — not a guess, a fact about
+     the app's own history: the ⚡ mark did not exist before v1.0.9, so every
+     undated gem is newer than every undated favourite. */
+  function markDay(ms) {
+    if (!ms) return null;
+    var d = new Date(ms);
+    return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+  }
+  function gemRows(state) {
+    var seen = {}, rows = [], i;
+    function add(r, isGem, isFav) {
+      var k = r[0] + ',' + r[1] + ',' + r[2], row = seen[k];
+      var d = markDate(state, isGem ? 'g' : 'f', r[0], r[1], r[2]);
+      if (row) {
+        row.gem = row.gem || isGem; row.fav = row.fav || isFav;
+        if (d && (!row.date || d > row.date)) row.date = d;
+        return;
+      }
+      seen[k] = { ref: r, gem: isGem, fav: isFav, date: d, seq: rows.length };
+      rows.push(seen[k]);
+    }
+    var g = state.gems || [], f = state.favorites || [];
+    for (i = 0; i < g.length; i++) add(g[i], true, false);
+    for (i = 0; i < f.length; i++) add(f[i], false, true);
+    rows.sort(function (a, b) {
+      if (a.date && b.date) return b.date - a.date || b.seq - a.seq;
+      if (a.date) return -1;
+      if (b.date) return 1;
+      if (a.gem !== b.gem) return a.gem ? -1 : 1;
+      return b.seq - a.seq;
+    });
+    return rows;
   }
 
   // ---------- Verse of the Day / Moment sources ----------
@@ -1236,6 +1432,35 @@
     });
   }
 
+  /* v1.1.0 — the mark dates, packed.
+     Written plainly they were the LARGEST field in the code, bigger than a
+     year of reading, to record which of a dozen verses was marked first.
+     Each becomes one character of kind, the verse's global index in base 36,
+     and the day in base 36 counted from 2020. */
+  var MARK_EPOCH = Date.UTC(2020, 0, 1);   // minutes from here, in base 36
+  function packMarks(map) {
+    var out = [];
+    for (var k in (map || {})) {
+      var bits = k.split('|'); if (bits.length !== 2) continue;
+      var r = bits[1].split(':');
+      var gi = refToIndex(+r[0], +r[1], +r[2]);
+      out.push(bits[0] + gi.toString(36) + '.' +
+        Math.round((map[k] - MARK_EPOCH) / 60000).toString(36));
+    }
+    return out.join(';');
+  }
+  function unpackMarks(packed) {
+    var out = {};
+    if (!packed) return out;
+    String(packed).split(';').forEach(function (item) {
+      if (!item) return;
+      var kind = item.charAt(0), rest = item.slice(1).split('.');
+      var ref = indexToRef(parseInt(rest[0], 36));
+      out[markKey(kind, ref[0], ref[1], ref[2])] = MARK_EPOCH + parseInt(rest[1], 36) * 60000;
+    });
+    return out;
+  }
+
   function packPlan(plan) {
     var p = JSON.parse(JSON.stringify(plan));
     p.read = packRanges(plan.read, plan.size, [[0, plan.size]]);
@@ -1272,7 +1497,11 @@
       ls: state.lapSeeded,
       M: state.milestones || [],
       MB: packBadges(state.msBase || []),
-      gc: state.gapClaim || null
+      gc: state.gapClaim || null,
+      // v1.1.0 — the day a mark was made, and the season a man is in.
+      // The room is NOT here: it travels sealed, after a ~ (v0.4 §9).
+      ma: packMarks(state.markAt),
+      se: state.seasons || null
     };
   }
   function fromPacked(p) {
@@ -1301,7 +1530,10 @@
       milestones: p.M || [],
       msBase: unpackBadges(p.MB),
       gapClaim: p.gc || null,
-      prayRun: null                 // a prayer belongs to the phone it was prayed on
+      markAt: unpackMarks(p.ma),
+      seasons: p.se || { now: null, past: [] },
+      prayRun: null,                // a prayer belongs to the phone it was prayed on
+      audioRun: null                // and so does a reading aloud
     };
   }
 
@@ -1330,6 +1562,7 @@
   function exportCodeV1(state) {
     var s = JSON.parse(JSON.stringify(state));
     delete s.prayRun; delete s.gems; delete s.milestones; delete s.msBase; delete s.gapClaim;
+    delete s.markAt; delete s.seasons; delete s.room; delete s.audioRun;      // v1.1.0
     return _encode(s, 'BB1.');
   }
 
@@ -1338,7 +1571,7 @@
   // unblamed, and the app says plainly that it was made by a newer DrawNigh.
   function codeKind(code) {
     if (!code) return 'unreadable';
-    var s = String(code).trim().replace(/\s+/g, '');
+    var s = splitCode(code).body;                      // v1.1.0: a sealed room may follow a ~
     var m = /^BB(\d+)\./.exec(s);
     if (m) {
       var n = parseInt(m[1], 10);
@@ -1375,7 +1608,8 @@
     if (!code) return null;
     var kind = codeKind(code);
     if (kind === 'newer' || kind === 'unreadable') return null;
-    var s = String(code).trim().replace(/\s+/g, '').replace(/^BB\d+\./, '');
+    var parts = splitCode(code);
+    var s = parts.body.replace(/^BB\d+\./, '');
     try {
       var raw = _decode(s);
       if (!raw || typeof raw !== 'object') return null;
@@ -1387,7 +1621,11 @@
         if (raw.v !== 1) return null;
         st = raw;
       }
-      return fillDefaults(st);
+      st = fillDefaults(st);
+      // The room arrives sealed and stays sealed. Nothing is announced —
+      // restore is silent (v0.4 §9). It is opened from Settings, with the PIN.
+      if (parts.room) st.room = { door: null, knock: null, sealed: parts.room };
+      return st;
     } catch (e) { return null; }
   }
 
@@ -1514,6 +1752,749 @@
     if (cb) cb();
   }
 
+  // ================= v1.1.0 =================
+
+  // ---------- Seasons (v16.1 §3) ----------
+  // What a man is reaching toward, across months. One at a time. Setting a new
+  // one never destroys the old — it is archived in dated succession, and the
+  // archive lives wherever the season is set, so a man with no room has one too.
+  //
+  // It is a GENERAL feature on purpose. A season drawn from The Secret Place
+  // would have been a tell: a line on the main screen that could only have come
+  // from one place. Any reader can set one, so a season on screen says nothing
+  // about whether a room exists.
+  function seasonSet(state, text, now) {
+    if (!state.seasons) state.seasons = { now: null, past: [] };
+    var t = String(text == null ? '' : text).trim();
+    var cur = state.seasons.now;
+    if (cur && cur.text) {
+      state.seasons.past.push({ text: cur.text, from: cur.from, to: todayStr(now) });
+      if (state.seasons.past.length > 200) state.seasons.past = state.seasons.past.slice(-200);
+    }
+    state.seasons.now = t ? { text: t, from: todayStr(now) } : null;
+    return state.seasons.now;
+  }
+  function seasonCurrent(state) {
+    return (state.seasons && state.seasons.now) || null;
+  }
+  // One man, one season. Two devices are reconciled by keeping the season that
+  // was set most recently, and every former season from either side is kept.
+  function mergeSeasons(mine, theirs) {
+    mine = mine || { now: null, past: [] };
+    theirs = theirs || { now: null, past: [] };
+    var out = { now: null, past: [] }, seen = {};
+    function take(list) {
+      (list || []).forEach(function (s) {
+        if (!s || !s.text) return;
+        var k = s.text + '|' + (s.from || '');
+        if (seen[k]) return;
+        seen[k] = 1; out.past.push({ text: s.text, from: s.from, to: s.to });
+      });
+    }
+    take(mine.past); take(theirs.past);
+    var a = mine.now, b = theirs.now;
+    if (a && b) {
+      var newer = (b.from || '') > (a.from || '') ? b : a;
+      var older = newer === b ? a : b;
+      var ok = older.text + '|' + (older.from || '');
+      if (older.text !== newer.text && !seen[ok]) {
+        seen[ok] = 1; out.past.push({ text: older.text, from: older.from, to: newer.from });
+      }
+      out.now = { text: newer.text, from: newer.from };
+    } else {
+      out.now = a || b || null;
+      if (out.now) out.now = { text: out.now.text, from: out.now.from };
+    }
+    out.past.sort(function (x, y) { return (x.from || '') < (y.from || '') ? -1 : 1; });
+    if (out.past.length > 200) out.past = out.past.slice(-200);
+    return out;
+  }
+
+  // ---------- Base32 for the square (v17, Decision 101) ----------
+  // QR's alphanumeric table holds uppercase letters, digits and nine symbols and
+  // nothing else, so a base64 code falls to byte mode and the smaller column of
+  // the capacity table. Base32 is about 20% more characters and buys the
+  // alphanumeric table — which means a smaller square at STRONGER error
+  // correction. A longer code that makes a tougher picture.
+  //
+  // The square only. Copy and file keep the format they have.
+  var B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  function b32Encode(str) {
+    var out = '', bits = 0, val = 0, i;
+    for (i = 0; i < str.length; i++) {
+      val = (val << 8) | (str.charCodeAt(i) & 255); bits += 8;
+      while (bits >= 5) { out += B32.charAt((val >>> (bits - 5)) & 31); bits -= 5; }
+    }
+    if (bits > 0) out += B32.charAt((val << (5 - bits)) & 31);
+    return out;
+  }
+  function b32Decode(s) {
+    var out = '', bits = 0, val = 0, i, idx;
+    s = String(s).toUpperCase().replace(/[^A-Z2-7]/g, '');
+    for (i = 0; i < s.length; i++) {
+      idx = B32.indexOf(s.charAt(i));
+      if (idx < 0) continue;
+      val = (val << 5) | idx; bits += 5;
+      if (bits >= 8) { out += String.fromCharCode((val >>> (bits - 8)) & 255); bits -= 8; }
+    }
+    return out;
+  }
+
+  // ---------- The squares (v17, Decisions 102 and 103) ----------
+  /* v1.1.3, DECISION 142 — THE BUDGET GOES BACK TO VERSION 40.
+     This reverses v1.1.1's Decision 112, and it is reversed on evidence rather
+     than on second thoughts, so both halves are kept here.
+
+     Decision 112 set the budget at version 20 (702 characters) because
+     v1.1.0's version-40 square could not be scanned at all — measured on a
+     real phone against a ladder of six squares, where version 26 was the last
+     that read and only with a dedicated scanner app.
+
+     On 7 September 2026 that ladder was run again, on the phone the feature
+     exists to serve. The real backup square read with the phone's ORDINARY
+     camera app, and so did generated squares at versions 5, 6, 26 and 40 —
+     version 40 twice over, on two separately generated squares, with the
+     plain camera, with Google Lens and with CamScanner. The premise Decision
+     112 rested on no longer holds on this hardware.
+
+     What that premise was costing: a code carrying a room ran to 22 squares,
+     and 22 squares is 22 scans. At version 40 the same code is a handful.
+     Dickson's ruling: "the QR build for the app should be version 40 and not
+     22 anymore" — and, on being asked whether one square should therefore be
+     the ceiling: "a plain back-up can be more than one — the QR code is just a
+     channel to move data. We can't for only one QR code — the user is already
+     aware of how many QR code the transfer will take."
+
+     So the square count is whatever the data needs, at version 40 apiece, with
+     the count stated. 2420 alphanumeric characters fit a version-40 square at
+     error correction Q (measured against the shipped qrcode.js, not read off a
+     table); the header "DN2*TAG*12*12*" costs seventeen of them, and the
+     budget is set at 2400 to leave room for a three-figure count.
+
+     Decision 103 is untouched: above three squares the app states the scan
+     count and offers the file as the easier road. It does not refuse.
+
+     Not changed, and deliberately: the squares are stepped through BY HAND.
+     Dickson considered advancing them automatically and rejected it himself —
+     "the phone may not capture it on time before it changes." */
+  var QR_PAYLOAD = 2400;
+
+  /* v1.1.4, Decision 155 — F34. Version 40 read on the phone, but only just:
+     4x zoom and ten to fifteen seconds, and two of the three squares refused
+     until they were tried twice. The one that read first time was the short
+     remainder, drawn at a far lower version. So version 40 is at the EDGE, not
+     comfortably inside it — which is what v1.1.0's controlled test measured
+     when it put the threshold at version 26.
+
+     The answer is not to overturn Decision 142 and make everyone scan more
+     squares. It is to let a reader fighting his camera choose. Three budgets,
+     each measured against the shipped qrcode.js rather than read off a table,
+     each leaving nineteen characters for the worst-case header
+     "DN2*TAGTAG*123*123*":
+
+       fewest    2400 of 2420  →  version 40, 177 modules  (today's behaviour)
+       balanced  1410 of 1429  →  version 30, 137 modules
+       easiest   1075 of 1094  →  version 26, 121 modules
+
+     Nobody is made to scan more squares than he needs, and a man in trouble
+     has a way out. Decision 103's warning above three squares simply fires. */
+  var QR_MODES = { fewest: 2400, balanced: 1410, easiest: 1075 };
+  function qrBudget(mode) {
+    var n = QR_MODES[String(mode || 'fewest')];
+    return n || QR_PAYLOAD;
+  }
+
+  /* The square carries the code's BYTES, not its text.
+     A first cut base32-encoded the base64 string itself, which is encoding an
+     encoding: base64 text is 8 bits a character, so re-encoding it at 5 bits a
+     character costs 60% instead of 20% and pushed an ordinary code to two
+     squares. Decoding the base64 back to bytes first restores the arithmetic
+     the design was built on — base32 is 6/5 of base64, and a real code is one
+     square. Caught by a test, not by reading. */
+  function _binToBytes(bin) {
+    var u = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i) & 255;
+    return u;
+  }
+  function _bytesToBin(u) {
+    var out = '';
+    for (var i = 0; i < u.length; i++) out += String.fromCharCode(u[i]);
+    return out;
+  }
+  function _u32(n) {
+    return String.fromCharCode((n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255);
+  }
+  function _readU32(s, at) {
+    return ((s.charCodeAt(at) << 24) | (s.charCodeAt(at + 1) << 16) |
+            (s.charCodeAt(at + 2) << 8) | s.charCodeAt(at + 3)) >>> 0;
+  }
+  function codeToBinary(code) {
+    var parts = splitCode(code);
+    var m = /^BB(\d+)\./.exec(parts.body);
+    var ver = m ? parseInt(m[1], 10) : 1;
+    var b64 = m ? parts.body.slice(m[0].length) : parts.body;
+    var body;
+    try {
+      body = _atob(b64);
+    } catch (e) {
+      // Not base64 after all. Carry the code as plain text rather than
+      // refusing to draw a square at all — a square that works is worth more
+      // than a rule about how it was packed.
+      var raw = String(code), t = '';
+      for (var z = 0; z < raw.length; z++) t += String.fromCharCode(raw.charCodeAt(z) & 255);
+      return String.fromCharCode(2, 0) + _u32(t.length) + t + String.fromCharCode(0);
+    }
+    var out = String.fromCharCode(1, ver) + _u32(body.length) + body;
+    if (parts.room) {
+      var seg = String(parts.room).split('.');       // R1.salt.iv.data
+      out += String.fromCharCode(1);
+      for (var k = 1; k < 4; k++) {
+        var raw = _atob(seg[k] || '');
+        out += _u32(raw.length) + raw;
+      }
+    } else {
+      out += String.fromCharCode(0);
+    }
+    return out;
+  }
+  function binaryToCode(bin) {
+    if (!bin) return null;
+    if (bin.charCodeAt(0) === 2) {                  // carried as plain text
+      var n0 = _readU32(bin, 2);
+      return bin.slice(6, 6 + n0);
+    }
+    if (bin.charCodeAt(0) !== 1) return null;
+    var ver = bin.charCodeAt(1);
+    var len = _readU32(bin, 2), at = 6;
+    var body = bin.slice(at, at + len); at += len;
+    var code = 'BB' + ver + '.' + _btoa(body);
+    if (bin.charCodeAt(at) === 1) {
+      at++;
+      var seg = ['R1'];
+      for (var k = 0; k < 3; k++) {
+        var n = _readU32(bin, at); at += 4;
+        seg.push(_btoa(bin.slice(at, at + n))); at += n;
+      }
+      code += '~' + seg.join('.');
+    }
+    return code;
+  }
+
+  function qrChunks(code, mode) {
+    var body = b32Encode(codeToBinary(code));
+    // A short check value over the whole code, so a square from one code can
+    // never be mistaken for a square from another.
+    var sum = 0, i;
+    for (i = 0; i < body.length; i++) sum = (sum * 31 + body.charCodeAt(i)) >>> 0;
+    var tag = sum.toString(36).toUpperCase().slice(0, 6);
+    var budget = qrBudget(mode);
+    var total = Math.max(1, Math.ceil(body.length / budget));
+    /* v1.1.4, Decision 154 — a square stays only as dense as its content needs.
+       The old cut filled each square to the budget and left whatever remained
+       in the last one, so a three-square code was two squares at version 40 and
+       one small one. Spreading the body evenly across the same number of squares
+       costs nothing — the count is identical — and every square comes out at the
+       lower version the short remainder already enjoyed. F34's own evidence is
+       that the short square was the one that read first time.
+
+       A code that fits one square is untouched by this and always was: it is
+       drawn at whatever version its own length needs, never padded out. */
+    var each = Math.ceil(body.length / total);
+    var out = [];
+    for (i = 0; i < total; i++) {
+      out.push('DN2*' + tag + '*' + (i + 1) + '*' + total + '*' +
+               body.slice(i * each, (i + 1) * each));
+    }
+    return { tag: tag, total: total, squares: out, mode: String(mode || 'fewest') };
+  }
+  function qrParse(text) {
+    var m = /^DN2\*([A-Z0-9]+)\*(\d+)\*(\d+)\*([\s\S]*)$/.exec(String(text).trim());
+    if (!m) return null;
+    return { tag: m[1], index: parseInt(m[2], 10), total: parseInt(m[3], 10), body: m[4] };
+  }
+  // Any order, nothing written until every square is in. A half-restored
+  // reading history is worse than none — Decision 85's own reasoning.
+  function qrCollect(bag, part) {
+    if (!part) return bag;
+    if (!bag || bag.tag !== part.tag || bag.total !== part.total) {
+      bag = { tag: part.tag, total: part.total, parts: {} };
+    }
+    bag.parts[part.index] = part.body;
+    return bag;
+  }
+  function qrMissing(bag) {
+    var out = [];
+    if (!bag) return out;
+    for (var i = 1; i <= bag.total; i++) if (bag.parts[i] === undefined) out.push(i);
+    return out;
+  }
+  function qrAssemble(bag) {
+    if (!bag || qrMissing(bag).length) return null;
+    var body = '';
+    for (var i = 1; i <= bag.total; i++) body += bag.parts[i];
+    try { return binaryToCode(b32Decode(body)); } catch (e) { return null; }
+  }
+
+  // ---------- The Secret Place (v0.4) ----------
+  // Three locks in sequence, each invisible until the one before it is passed:
+  // the place (a verse), the knock (a count AND a rhythm, made on the prayer
+  // timer's pause), and the word (a PIN, on a panel that does not exist until
+  // the first two are right).
+  //
+  // The clock pauses every time, on every verse, including the door verse. The
+  // count runs silently underneath and nothing marks a tap. A door that
+  // behaved differently would announce itself with one tap.
+
+  // A rhythm cannot be stumbled through: a guesser tapping steadily sails
+  // through any bare count, because he never waits where the waiting belongs.
+  /* ============ v1.1.1 — THE KNOCK IS A NUMBER (Decisions 114, 116, 117) ======
+     WHY THIS REPLACES THE FELT RHYTHM OF v0.4 §2.3.
+     Dickson was locked out of a room he had made minutes earlier, using the
+     option the design offered as the forgiving one. Three faults were stacked
+     in one door and the redesign removes all three:
+
+       1. THE BANDS. "By feel" never compared seconds — gapClass() sorted every
+          gap into quick (<3s), hold (3–8s) or wait (>8s) and matched band for
+          band. His 3.3s sat three tenths of a second inside "hold"; tapped
+          again at 2.9 it fell into "quick" and the door stayed shut. Generous
+          in the middle of a band, merciless at its edges, and the pad showed
+          him the number without ever showing him the band.
+       2. THE MEASUREMENT. Gaps were pause-to-pause wall clock, so a gap was
+          hesitation-before-resume PLUS running time, delivered as one number
+          with no way to see how it split. Fixed at the caller: a gap is now
+          RUNNING time only, resume to pause, in both places (finding F9).
+       3. THE INSTRUMENT. The number appeared only after the tap, so a man
+          could not aim. Fixed at the caller with a live counter.
+
+     WHAT A KNOCK IS NOW: whole seconds, 3 to 6 of them, each 1 to 9 — "4567"
+     means let the clock run 4, pause; run 5, pause; run 6, pause; run 7, pause.
+     One rule the whole way along, with no hidden cliff a third of a second wide.
+
+     AND IT ENDS ON A RESUME, not a pause. After the last pause the man resumes
+     and simply prays; five unbroken seconds of running clock open the word
+     panel. A stranger working through rhythms is pausing constantly — leaving
+     the clock to run five seconds is the one thing he never does, so he passes
+     straight through the moment he was right and never learns he was. The owner
+     does it without thinking, because he has finished knocking. */
+  var KNOCK_MIN = 3, KNOCK_MAX = 6;      // gaps: fewer stumbles in, more is forgotten
+  var KNOCK_LOW = 1, KNOCK_HIGH = 9;     // seconds per gap — so a knock is a number
+  var KNOCK_TOLS = [1, 2, 3];            // not 4: see knockCheck's 'spread' below
+  var KNOCK_SETTLE = 5;                  // unbroken running seconds that open the panel
+
+  function knockGapsOf(knock) { return (knock && knock.gaps) || []; }
+  function knockTol(knock) {
+    var t = knock && knock.tol;
+    return (t === 1 || t === 2 || t === 3) ? t : 1;
+  }
+  function knockSpread(gaps) {
+    if (!gaps.length) return 0;
+    var lo = gaps[0], hi = gaps[0];
+    for (var i = 1; i < gaps.length; i++) { if (gaps[i] < lo) lo = gaps[i]; if (gaps[i] > hi) hi = gaps[i]; }
+    return hi - lo;
+  }
+  /* THE SPREAD RULE, AND IT IS ARITHMETIC RATHER THAN JUDGEMENT.
+     A guesser tapping at one constant interval t passes when every target sits
+     within tolerance of t, which is possible exactly when
+         max(gap) - min(gap) <= 2 x tolerance.
+     4-5-6-7 at +/-1 is safe: no steady interval fits. The same knock at +/-2 is
+     open to any man tapping steadily every five seconds — he is within 2 of 4,
+     of 5, of 6 and of 7, and walks in knowing nothing. 2-6-3-9 at +/-2 is safe,
+     because its spread is 7.
+     This is v0.4 §2.3's own central fear — "a guesser tapping steadily sails
+     straight through" — stated as a number instead of a feeling. It is why the
+     tolerance list stops at 3: inside a 1–9 range a +/-4 tolerance needs a
+     spread above 8 to stay safe, which forces every knock to the extremes. A
+     tolerance that can only be used one way is not a choice.
+     The app WARNS and does not refuse. It already told the truth about the
+     all-quick-taps knock rather than forbidding it; this is the same rule
+     generalised, and the app has never decided for a man what he can be
+     trusted with. */
+  function knockCheck(knock) {
+    var g = knockGapsOf(knock), tol = knockTol(knock), out = [], i;
+    if (!g.length) return ['none'];
+    for (i = 0; i < g.length; i++) {
+      if (!(g[i] >= KNOCK_LOW && g[i] <= KNOCK_HIGH && g[i] === Math.round(g[i]))) { out.push('digits'); break; }
+    }
+    if (g.length < KNOCK_MIN) out.push('short');
+    if (g.length > KNOCK_MAX) out.push('long');
+    if (knockSpread(g) <= 2 * tol) out.push('spread');
+    return out;
+  }
+  // Kept under its old name so callers read the same. 'weak' now means the
+  // spread rule is broken rather than that every tap was a quick one.
+  function knockStrength(knock) {
+    var c = knockCheck(knock);
+    if (c.indexOf('none') >= 0) return 'none';
+    return c.length ? 'weak' : 'ok';
+  }
+  // How long the whole thing takes on a running clock, settle included. The
+  // knock is made by pausing a RUNNING prayer, so all of it has to fit inside
+  // the prayer — 4567 needs 27 seconds. A door that makes a man stretch the
+  // timer before he can reach it is friction at best; the room states this at
+  // the making rather than letting him find out at the door.
+  function knockSeconds(knock) {
+    var g = knockGapsOf(knock), t = 0;
+    for (var i = 0; i < g.length; i++) t += g[i];
+    return t + KNOCK_SETTLE;
+  }
+  function knockMatches(knock, gaps) {
+    if (!knock) return false;
+    var want = knockGapsOf(knock), tol = knockTol(knock);
+    if (!gaps || gaps.length !== want.length) return false;
+    for (var i = 0; i < want.length; i++) {
+      if (Math.abs(gaps[i] - want[i]) > tol) return false;
+    }
+    return true;
+  }
+  /* Decision 119a — a wrong word costs a wait that grows.
+     The word can be one tapped out of the door verse, and by the time the panel
+     is open that verse is on the screen: about twenty-five candidates, in plain
+     sight. Hiding which shape the owner used does not stop a guesser trying
+     them — they are cheap and obvious — it only stops him concluding anything
+     when they fail. The wait is what does the work, and it turns twenty-five
+     guesses from a minute of tapping into hours of holding a phone.
+     This app has always been willing to make a man wait: the Gate's five
+     seconds in Order My Steps, three months in the seal, five seconds of
+     stillness at the door. */
+  var TRY_WAITS = [0, 0, 5, 15, 60, 300];
+  function tryWaitMs(wrongCount) {
+    var n = wrongCount | 0;
+    if (n <= 0) return 0;
+    var s = n < TRY_WAITS.length ? TRY_WAITS[n] : TRY_WAITS[TRY_WAITS.length - 1];
+    return s * 1000;
+  }
+  function roomExists(state) { return !!(state.room && (state.room.door || state.room.sealed)); }
+  // Locks one and two, on the device. They never touch the PIN, and they say
+  // nothing either way — a wrong knock does nothing at all.
+  function roomKnockOk(state, ref, gaps) {
+    var r = state.room;
+    if (!r || !r.door || !ref) return false;
+    if (r.door[0] !== ref[0] || r.door[1] !== ref[1] || r.door[2] !== ref[2]) return false;
+    return knockMatches(r.knock, gaps);
+  }
+  /* v1.1.1 — `hint` is the owner's own cue for his word (Decision 118a), shown
+     only after two wrong words, on a panel nobody reaches without passing the
+     verse and the knock first. It is not recovery and does not breach §7:
+     nothing is unlocked by it and nothing stored in it opens the room.
+     `wordShape` records where he took his word from — the door verse, any
+     verse, or his own head. It steers the making and nothing else: the panel
+     at the door looks identical whichever it is, because a panel that asked
+     differently would announce which of the three a stranger was facing. */
+  function newRoom(door, knock, now) {
+    return {
+      door: door.slice(), knock: knock, made: todayStr(now),
+      entries: [], cats: [], seq: 0,
+      badgeChoice: 'room',
+      reminder: null,
+      // v1.1.2, Decision 128 (the vault) — whether the word panel offers the
+      // door verse's words as chips at all. On by default, matching every
+      // room made before this existed. Independent of wordShape: a bare box
+      // never proves the word was typed, because it might belong to any of
+      // the three shapes with chips simply turned off.
+      wordShape: 'typed', hint: '', showWords: true,
+      pinCheck: null, sealed: null
+    };
+  }
+  function roomAddEntry(room, text, now) {
+    room.seq = (room.seq || 0) + 1;
+    var e = {
+      id: 'e' + room.seq, date: todayStr(now), title: '',
+      body: String(text == null ? '' : text),
+      letter: false, struggle: false, testimony: false, other: false,
+      cats: [], open: false, endNote: '', endAt: null, endIsTestimony: false,
+      // v1.1.4, Decisions 166–173 — a letter's own seal, with its own clock.
+      // A letter written on an older build has neither field; both read back
+      // as unsealed, which is what it was.
+      sealed: false, sealedAt: null
+    };
+    room.entries.push(e);
+    return e;
+  }
+  function roomEntry(room, id) {
+    for (var i = 0; i < (room.entries || []).length; i++) if (room.entries[i].id === id) return room.entries[i];
+    return null;
+  }
+  // Nothing inside counts toward anything — no streak, no badge, no tally, and
+  // no category counts. Categories are for finding, never for tallying.
+  function roomCats(room) {
+    var names = {}, out = [];
+    (room.cats || []).forEach(function (c) { names[c.name] = c; });
+    (room.entries || []).forEach(function (e) {
+      (e.cats || []).forEach(function (n) { if (!names[n]) { names[n] = { name: n, sealed: false, sealedAt: null }; } });
+    });
+    for (var k in names) out.push(names[k]);
+    out.sort(function (a, b) { return a.name < b.name ? -1 : 1; });
+    return out;
+  }
+  function roomSealCat(room, name, sealed, now) {
+    var list = room.cats || (room.cats = []), found = null;
+    for (var i = 0; i < list.length; i++) if (list[i].name === name) found = list[i];
+    if (!found) { found = { name: name, sealed: false, sealedAt: null }; list.push(found); }
+    found.sealed = !!sealed;
+    /* v1.1.2, finding F16 — CORRECTED. The design (§23) and this function's own
+       neighbour promised the exact moment, to the second; this stored only the
+       day, so the seal lifted up to a day early (about two hours short, in
+       Dickson's own case). Fixed the same way v1.1.0 fixed the identical slip
+       in Gems: the moment, not the day. */
+    found.sealedAt = sealed ? (now ? new Date(now).getTime() : Date.now()) : null;
+    return found;
+  }
+  // Three months in the seal first. A man in the state that makes him want to
+  // burn his own words is exactly the man who should not be able to. The room
+  // states the exact moment, to the second — a man can argue with a fuzzy
+  // delay; there is nothing to argue with in a timestamp.
+  function catDeletableAt(cat) {
+    if (!cat || !cat.sealed || !cat.sealedAt) return null;
+    // A category sealed under v1.1.1 stored a day string ("YYYY-MM-DD"); one
+    // sealed from v1.1.2 on stores a timestamp. Both are read back correctly.
+    var base = (typeof cat.sealedAt === 'number') ? new Date(cat.sealedAt) : new Date(cat.sealedAt + 'T00:00:00');
+    var d = new Date(base.getTime());
+    d.setMonth(d.getMonth() + 3);
+    return d;
+  }
+  function catCanDelete(cat, now) {
+    var when = catDeletableAt(cat);
+    if (!when) return false;
+    return (now ? new Date(now) : new Date()).getTime() >= when.getTime();
+  }
+
+  /* ---------- v1.1.4: sealing ONE letter (Decisions 166–173) ----------
+     Decision 138 gave the room sealing at the level of a category a man named
+     himself, and that shipped. Sealing a single letter had never been designed,
+     and Decision 148 made its absence the reason there is a v1.1.4 at all.
+
+     A letter's seal is the same shape as a category's — a flag and the moment,
+     to the second — and it runs its own three-month clock. Decision 169: each
+     seal stands on its own. Unsealing a category returns only the letters the
+     owner never sealed himself; one he sealed by hand stays sealed, with its
+     clock untouched. Nothing a man chose is undone by something else he chose,
+     and a category unsealed after a month must not hand back a letter whose
+     cooling had two months to run. */
+  function roomSealEntry(room, id, sealed, now) {
+    var e = roomEntry(room, id);
+    if (!e) return null;
+    e.sealed = !!sealed;
+    e.sealedAt = sealed ? (now ? new Date(now).getTime() : Date.now()) : null;
+    return e;
+  }
+  // The same clock as a category's, read off whichever object carries the seal,
+  // so the two can never drift apart. §11 and F16's fix: the moment, not the day.
+  function entryDeletableAt(e) { return catDeletableAt(e); }
+  function entryCanDelete(e, now) { return catCanDelete(e, now); }
+  function roomSealedEntries(room) {
+    return ((room && room.entries) || []).filter(function (e) { return !!e.sealed; });
+  }
+  // Deleting one letter, after its three months. Decision 173 asks for the word
+  // from inside the opened letter; this only does the removing.
+  function roomDeleteEntry(room, id) {
+    var before = ((room && room.entries) || []).length;
+    room.entries = ((room && room.entries) || []).filter(function (e) { return e.id !== id; });
+    return room.entries.length < before;
+  }
+
+  /* ---------- v1.1.4: renaming a category (Decisions 174–177) ----------
+     Raised in v1.1.2, carried undesigned, ruled in by Decision 160.
+
+     174 — it is the same folder with a new name on it. Every letter follows;
+           nothing moves and nothing is left behind.
+     176 — the old name vanishes. Not kept on the category, not kept in a
+           history. A man may rename a category precisely to stop reading a
+           word, and keeping that word in small grey text underneath would
+           defeat the whole act.
+     177 — a name already taken is refused plainly. Capitals do not make a
+           different name (the same reasoning normPin already applies to the
+           word), and a SEALED category counts — the room says the name is
+           taken without naming, opening or revealing anything in the seal.
+
+     A merge was offered and refused: moving every letter out of one category
+     into another is a different feature, and a destructive one. */
+  function catKey(name) { return String(name == null ? '' : name).replace(/\s+/g, ' ').trim().toLowerCase(); }
+  function roomRenameCat(room, oldName, newName) {
+    var from = String(oldName == null ? '' : oldName);
+    var to = String(newName == null ? '' : newName).replace(/\s+/g, ' ').trim();
+    if (!to) return { ok: false, why: 'empty' };
+    /* Decision 175 — a sealed category is unsealed before it can be renamed.
+       The screen does not offer Rename on one, and this refuses it as well, so
+       that if some future screen ever reaches for it the seal still holds. The
+       same two-guard shape as Decision 161. */
+    var cats = roomCats(room), fromCat = null;
+    cats.forEach(function (c) { if (c.name === from) fromCat = c; });
+    if (fromCat && fromCat.sealed) return { ok: false, why: 'sealed' };
+    if (catKey(to) === catKey(from)) {
+      // The same name in different capitals is not a collision with itself —
+      // it is a man tidying his own capitals, and it is allowed through.
+      if (to === from) return { ok: false, why: 'same' };
+    } else {
+      var taken = null;
+      roomCats(room).forEach(function (c) { if (catKey(c.name) === catKey(to)) taken = c.name; });
+      if (taken !== null) return { ok: false, why: 'taken', taken: taken };
+    }
+    ((room && room.entries) || []).forEach(function (e) {
+      e.cats = (e.cats || []).map(function (n) { return n === from ? to : n; });
+    });
+    var list = room.cats || (room.cats = []), seen = null;
+    for (var i = 0; i < list.length; i++) if (list[i].name === from) { list[i].name = to; seen = list[i]; }
+    return { ok: true, cat: seen, name: to };
+  }
+
+  /* ---------- v1.1.4, Decision 159 — F40's one call, at one place ----------
+     unsealRoom hands back a room with pinCheck null, and nothing ever wrote a
+     new one. So a restored room opened once could never be opened again: the
+     door had nothing left to test a word against, and the panel closed in
+     silence. The worst of the twelve findings, because it fell on the reader
+     who did the careful thing.
+
+     At the moment a restore succeeds the app is holding the correct word — it
+     has just decrypted the room with it. This seals a fresh check-scrap from
+     that same word, so nothing is asked of the reader. A scrap is a sealed
+     EMPTY room: it proves the word and carries nothing. */
+  function sealCheck(room, pin) {
+    return sealRoom({
+      door: room.door, knock: room.knock, made: room.made,
+      entries: [], cats: [], seq: 0
+    }, pin);
+  }
+  // Every three days, fixed. Not a notification to be tuned so it does not
+  // become noise — a rhythm that makes the memory permanent. The phones that
+  // let you choose are the ones where you forget.
+  function reminderDue(state, now) {
+    var r = state.room;
+    if (!r || !r.reminder || !r.reminder.on) return false;
+    var last = r.reminder.lastShown;
+    if (!last) return true;
+    return dayBefore(todayStr(now), 3) >= last;
+  }
+  function reminderShown(state, now) {
+    if (state.room && state.room.reminder) state.room.reminder.lastShown = todayStr(now);
+  }
+
+  // ---------- Sealing the room for the code (v0.4 §9) ----------
+  // The room travels with the backup code, sealed with the PIN. The code can
+  // reveal that something is sealed; it cannot reveal the door, the knock, the
+  // rhythm, the PIN, or one word of what is inside.
+  //
+  // So the DOOR AND KNOCK GO INSIDE THE SEAL TOO, not only the writing. That
+  // has one consequence, recorded rather than hidden: a restored code cannot
+  // work locks one and two until it has been opened once with the PIN, because
+  // the device genuinely does not know where the door is. Settings already
+  // offers the room in plain sight, and that is where the one deliberate act
+  // happens. Afterwards the three locks work silently, exactly as designed.
+  function _crypto() {
+    var c = (typeof self !== 'undefined' && self.crypto) || (typeof global !== 'undefined' && global.crypto) || null;
+    return (c && c.subtle) ? c : null;
+  }
+  function _bytesToB64(u8) {
+    var bin = '';
+    for (var i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]);
+    return _btoa(bin);
+  }
+  function _b64ToBytes(s) {
+    var bin = _atob(s), u8 = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return u8;
+  }
+  /* v1.1.3 — F18/F25. The word is no longer case-sensitive, and stray spaces
+     at either end no longer count.
+
+     This was found the hard way. A word tapped from the door verse's chips
+     goes into a MASKED box: the owner never reads it, he only points at it.
+     While the door verse stands the same chip is there to tap again, so the
+     room opens. Move the door and the chip is gone — and the only way left is
+     to type, exactly, a word he never actually saw. Under §7 there is no
+     recovery, so a capital letter was enough to cost a man his letters.
+
+     Nothing is weakened that matters. The lock's strength is the word nobody
+     else knows plus a knock nobody else can find plus the growing wait; a
+     stranger who has the word is not stopped by its capitals. What case
+     sensitivity was actually protecting was a trap for the owner. */
+  function normPin(pin) {
+    return String(pin == null ? '' : pin).replace(/\s+/g, ' ').trim().toLowerCase();
+  }
+  function _pinKey(c, pin, salt) {
+    var enc = new TextEncoder();
+    return c.subtle.importKey('raw', enc.encode(String(pin)), 'PBKDF2', false, ['deriveKey'])
+      .then(function (base) {
+        // A four-figure PIN is a small space. The work factor is what makes
+        // guessing it expensive, so it is set high on purpose.
+        return c.subtle.deriveKey(
+          { name: 'PBKDF2', salt: salt, iterations: 310000, hash: 'SHA-256' },
+          base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+      });
+  }
+  function sealRoom(room, pin) {
+    var c = _crypto();
+    if (!c) return Promise.reject(new Error('no-crypto'));
+    var salt = c.getRandomValues(new Uint8Array(16));
+    var iv = c.getRandomValues(new Uint8Array(12));
+    var payload = JSON.stringify({
+      door: room.door, knock: room.knock, made: room.made,
+      entries: room.entries || [], cats: room.cats || [], seq: room.seq || 0,
+      badgeChoice: room.badgeChoice || 'room', reminder: room.reminder || null,
+      // v1.1.2 — found while building the room's inside-editing: these three
+      // were never carried by the sealed payload, so a room restored from a
+      // backup code silently lost its word shape, its hint, and (once it
+      // existed) whether the word panel showed chips. Added rather than left
+      // freshly broken now that showWords exists too.
+      wordShape: room.wordShape || 'typed', hint: room.hint || '',
+      showWords: room.showWords !== false
+    });
+    return _pinKey(c, normPin(pin), salt).then(function (key) {
+      return c.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, new TextEncoder().encode(payload));
+    }).then(function (buf) {
+      return 'R1.' + _bytesToB64(salt) + '.' + _bytesToB64(iv) + '.' + _bytesToB64(new Uint8Array(buf));
+    });
+  }
+  function unsealRoom(blob, pin) {
+    var c = _crypto();
+    if (!c) return Promise.reject(new Error('no-crypto'));
+    var p = String(blob || '').split('.');
+    if (p.length !== 4 || p[0] !== 'R1') return Promise.reject(new Error('bad-blob'));
+    var salt = _b64ToBytes(p[1]), iv = _b64ToBytes(p[2]), data = _b64ToBytes(p[3]);
+    /* v1.1.3 — the tidied word is tried first, then the word exactly as typed.
+       The second attempt is for anything sealed before F18's fix, so a room
+       made on an older build still opens on this one. Nothing is announced
+       either way: to the owner it is simply his word, and to anyone else it is
+       still two failures, not one clue. */
+    function attempt(p2) {
+      return _pinKey(c, p2, salt).then(function (key) {
+        return c.subtle.decrypt({ name: 'AES-GCM', iv: iv }, key, data);
+      });
+    }
+    var tidy = normPin(pin), raw = String(pin == null ? '' : pin);
+    return attempt(tidy).catch(function (err) {
+      return (raw === tidy) ? Promise.reject(err) : attempt(raw);
+    }).then(function (buf) {
+      var obj = JSON.parse(new TextDecoder().decode(buf));
+      return {
+        door: obj.door, knock: obj.knock, made: obj.made,
+        entries: obj.entries || [], cats: obj.cats || [], seq: obj.seq || 0,
+        badgeChoice: obj.badgeChoice || 'room', reminder: obj.reminder || null,
+        // v1.1.2 — restored alongside everything else now that sealRoom
+        // carries them. A blob sealed before this existed has none of the
+        // three, so they fall back the same way a brand-new room does.
+        wordShape: obj.wordShape || 'typed', hint: obj.hint || '',
+        showWords: (obj.showWords === undefined) ? true : !!obj.showWords,
+        pinCheck: null, sealed: null
+      };
+    });
+  }
+  // A code carries its sealed room after a ~. Decision 82: the code is exactly
+  // the code — no padding, no ceiling. If it has a sealed room so be it; if it
+  // does not, so be it.
+  function splitCode(code) {
+    var s = String(code || '').trim().replace(/\s+/g, '');
+    var i = s.indexOf('~');
+    return i < 0 ? { body: s, room: null } : { body: s.slice(0, i), room: s.slice(i + 1) };
+  }
+
+  // ---------- Reading aloud (v18) ----------
+  // A verse heard is a verse read. The counting is the app's ordinary counting;
+  // this only remembers where a reading had reached, so a chapter stop can be
+  // resumed without hunting.
+  function audioMark(state, ref) {
+    state.audioRun = ref ? { ref: ref.slice(), at: Date.now() } : null;
+  }
+
   // ---------- Exports ----------
   var Engine = {
     COUNTS: COUNTS, BOOKS: BOOKS, TOTAL_VERSES: TOTAL_VERSES, OT_END: OT_END,
@@ -1557,6 +2538,32 @@
     recordMilestones: recordMilestones,
     isGem: isGem, toggleGem: toggleGem,
     chapterInfo: chapterInfo, testSeedGap: testSeedGap,
+    // v1.1.0
+    gemRows: gemRows, markDate: markDate, markDay: markDay,
+    seasonSet: seasonSet, seasonCurrent: seasonCurrent, mergeSeasons: mergeSeasons,
+    b32Encode: b32Encode, b32Decode: b32Decode,
+    qrChunks: qrChunks, qrParse: qrParse, qrCollect: qrCollect,
+    codeToBinary: codeToBinary, binaryToCode: binaryToCode,
+    qrMissing: qrMissing, qrAssemble: qrAssemble, QR_PAYLOAD: QR_PAYLOAD,
+    QR_MODES: QR_MODES, qrBudget: qrBudget,
+    knockMatches: knockMatches, knockStrength: knockStrength, knockCheck: knockCheck,
+    knockSeconds: knockSeconds, knockSpread: knockSpread, tryWaitMs: tryWaitMs,
+    KNOCK_MIN: KNOCK_MIN, KNOCK_MAX: KNOCK_MAX, KNOCK_LOW: KNOCK_LOW,
+    KNOCK_HIGH: KNOCK_HIGH, KNOCK_TOLS: KNOCK_TOLS, KNOCK_SETTLE: KNOCK_SETTLE,
+    roomExists: roomExists, roomKnockOk: roomKnockOk, newRoom: newRoom,
+    roomAddEntry: roomAddEntry, roomEntry: roomEntry, roomCats: roomCats,
+    roomSealCat: roomSealCat, catDeletableAt: catDeletableAt, catCanDelete: catCanDelete,
+    // v1.1.4 — per-letter sealing (166–173), renaming (174–177), F40's fix (159)
+    roomSealEntry: roomSealEntry, entryDeletableAt: entryDeletableAt,
+    entryCanDelete: entryCanDelete, roomSealedEntries: roomSealedEntries,
+    roomDeleteEntry: roomDeleteEntry, roomRenameCat: roomRenameCat,
+    catKey: catKey, sealCheck: sealCheck,
+    reminderDue: reminderDue, reminderShown: reminderShown,
+    sealRoom: sealRoom, unsealRoom: unsealRoom, splitCode: splitCode,
+    // v1.1.4, Decision 152 — the app compares a typed word against the door
+    // verse's own words, and it must tidy them exactly as the lock does.
+    normPin: normPin,
+    audioMark: audioMark, repairCatchUpLaps: repairCatchUpLaps,
     loadState: loadState, saveState: saveState, KEY: KEY
   };
 
