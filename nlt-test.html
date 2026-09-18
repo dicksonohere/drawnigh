@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DrawNigh — can this site reach the NLT?</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 26px 20px 60px;
+    background: #17140f; color: #efe8dc;
+    font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    font-size: 16px; line-height: 1.55;
+    max-width: 34rem; margin-inline: auto;
+  }
+  h1 { font-family: Georgia, serif; font-size: 1.6rem; color: #d9b45e; margin: 0 0 6px; line-height: 1.2; }
+  .sub { font-family: Georgia, serif; font-style: italic; color: #9a9086; margin: 0 0 26px; }
+  .step {
+    background: #1e1a14; border: 1px solid #38312a; border-radius: 10px;
+    padding: 14px 16px; margin-bottom: 10px;
+  }
+  .what { font-size: .78rem; letter-spacing: .1em; text-transform: uppercase; color: #9a9086; }
+  .state { font-family: Georgia, serif; font-size: 1.05rem; margin-top: 2px; }
+  .ok { color: #7fc98a; } .bad { color: #e4796b; } .wait { color: #9a9086; font-style: italic; }
+  .timing { font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums;
+            font-size: .85rem; color: #9a9086; }
+  .verdict { margin-top: 24px; border-radius: 12px; padding: 20px;
+             font-family: Georgia, serif; font-size: 1.15rem; line-height: 1.45; display: none; }
+  .verdict.show { display: block; }
+  .verdict b { display: block; font-size: 1.35rem; margin-bottom: 8px; }
+  .verdict.good { background: #1b2c1f; border: 1px solid #3a6a43; color: #c3e8ca; }
+  .verdict.blocked { background: #2d1b19; border: 1px solid #6b3a34; color: #f2bdb4; }
+  .verse { margin-top: 14px; padding: 14px 16px; background: #1e1a14;
+           border-left: 3px solid #d9b45e; border-radius: 0 8px 8px 0;
+           font-family: Georgia, serif; font-size: 1.05rem; }
+  .ref { font-family: ui-monospace, Menlo, monospace; font-size: .75rem; letter-spacing: .12em;
+         color: #d9b45e; margin-bottom: 6px; }
+  .detail { font-family: ui-monospace, Menlo, monospace; font-size: .78rem; color: #8b8178;
+            margin-top: 8px; word-break: break-word; }
+  button { margin-top: 22px; width: 100%; background: transparent; color: #d9b45e;
+           border: 1px solid #6b5a38; border-radius: 8px; padding: 13px 26px;
+           font-family: Georgia, serif; font-size: 1rem; cursor: pointer; }
+  .note { margin-top: 32px; padding-top: 16px; border-top: 1px solid #2a241d;
+          font-size: .88rem; color: #8b8178; }
+  .note p { margin: 0 0 10px; }
+  .note strong { color: #efe8dc; }
+</style>
+</head>
+<body>
+
+<h1>Can this site reach the NLT?</h1>
+<p class="sub">A browser will not let one website call another unless that other one allows it. This finds out — from your own address, which is the only one that counts.</p>
+
+<div class="step">
+  <div class="what">1 · Is this page working at all</div>
+  <div class="state wait" id="s1">checking…</div>
+  <div class="timing" id="t1"></div>
+</div>
+
+<div class="step">
+  <div class="what">2 · Can it reach Tyndale</div>
+  <div class="state wait" id="s2">waiting</div>
+  <div class="timing" id="t2"></div>
+</div>
+
+<div class="step">
+  <div class="what">3 · A long chapter — Psalm 119</div>
+  <div class="state wait" id="s3">waiting</div>
+  <div class="timing" id="t3"></div>
+</div>
+
+<div class="verdict" id="verdict"></div>
+<div id="extra"></div>
+
+<button id="again" type="button">Run it again</button>
+
+<div class="note">
+  <p><strong>No key is used.</strong> Tyndale's test mode answers this without one, so nothing of yours sits in a public repo. Test mode caps a reply at 50 verses, so Psalm 119 comes back cut short — that is the cap, not a fault.</p>
+  <p><strong>Run it on mobile data, not wifi</strong>, and on the Oppo too. The times decide how far ahead the app has to read.</p>
+  <p><strong>Delete this file once you have the answer.</strong> It has no use afterwards.</p>
+</div>
+
+<script>
+const API = 'https://api.nlt.to/api/passages?key=TEST&ref=';
+const $ = id => document.getElementById(id);
+const secs = ms => (ms/1000).toFixed(2) + ' s';
+
+function set(id, text, cls) { const n = $(id); n.textContent = text; n.className = 'state ' + cls; }
+
+async function timed(url) {
+  const t0 = performance.now();
+  const res = await fetch(url, { cache: 'no-store' });
+  const text = await res.text();
+  return { ms: Math.round(performance.now() - t0), status: res.status, ok: res.ok, text };
+}
+
+async function run() {
+  $('again').disabled = true;
+  $('verdict').className = 'verdict';
+  $('extra').innerHTML = '';
+  ['t1','t2','t3'].forEach(i => $(i).textContent = '');
+  set('s1','checking…','wait'); set('s2','waiting','wait'); set('s3','waiting','wait');
+
+  // 1 — a file on this same site. Proves the page and the connection are alive.
+  let alive = false;
+  try {
+    const r = await timed('bible.json');
+    alive = r.ok;
+    set('s1', alive ? 'Yes. This page and your connection are fine.'
+                    : 'The page loaded but cannot read its own files.', alive ? 'ok' : 'bad');
+    $('t1').textContent = secs(r.ms) + ' to read bible.json';
+  } catch (e) {
+    set('s1','No. Your connection is down — fix that, then run again.','bad');
+    $('again').disabled = false; return;
+  }
+
+  // 2 — the question.
+  let reached = false;
+  try {
+    const r = await timed(API + 'John.3.16');
+    if (r.ok && r.text.trim().length) {
+      reached = true;
+      set('s2','Yes. The NLT came through.','ok');
+      $('t2').textContent = secs(r.ms);
+      const words = r.text.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
+      $('extra').innerHTML = '<div class="verse"><div class="ref">JOHN 3:16 &middot; NLT</div>' +
+        words.slice(0,400).replace(/</g,'&lt;') + '</div>';
+    } else {
+      set('s2','It answered, and refused.','bad');
+      $('t2').textContent = 'code ' + r.status + ' · ' + secs(r.ms);
+      $('extra').innerHTML = '<div class="detail">' + r.text.replace(/</g,'&lt;').slice(0,300) + '</div>';
+    }
+  } catch (e) {
+    set('s2','No. The browser stopped it before it left.','bad');
+    $('extra').innerHTML = '<div class="detail">' + String(e.message || e) + '</div>';
+  }
+
+  // 3 — the long one.
+  if (reached) {
+    try {
+      const r = await timed(API + 'Psalm.119');
+      set('s3','Came through, cut at the test limit — as expected.','ok');
+      $('t3').textContent = secs(r.ms) + ' · ' + Math.round(r.text.length/1024) + ' KB';
+    } catch (e) { set('s3','The long one failed.','bad'); }
+  } else {
+    set('s3','Not tried — step 2 did not get through.','wait');
+  }
+
+  const v = $('verdict');
+  if (reached) {
+    v.className = 'verdict show good';
+    v.innerHTML = '<b>The web build can go ahead.</b>This site is allowed to reach Tyndale, ' +
+      'so DrawNigh on the website can carry the NLT — and it can reach your sister.';
+  } else {
+    v.className = 'verdict show blocked';
+    v.innerHTML = '<b>Blocked.</b>Step 1 proved your connection is fine, so this is Tyndale ' +
+      'refusing a request that came from a website. The web build cannot carry the NLT this way. ' +
+      'The Firefox add-on still can.';
+  }
+  $('again').disabled = false;
+}
+
+$('again').addEventListener('click', run);
+run();
+</script>
+
+</body>
+</html>
