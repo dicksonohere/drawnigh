@@ -15,6 +15,7 @@
   var randPos = -1;
   var momentTimer = null;
   var cuPlanId = null;
+  var cmpOn = false;      // compare: a sitting, like the flip. Nothing is written down.
 
   function verseText(b, c, v) { return BIBLE[b][1][c][v]; }
   function verseNote(b, c, v) { return NOTES[b + '.' + c + '.' + v] || ''; }
@@ -82,25 +83,122 @@
     if ($('dotsDot')) updateDots();   // v1.0.4: a new badge or offer may be waiting
   }
 
-  function showVerse(ref, foot) {
-    var b = ref[0], c = ref[1], v = ref[2];
-    var t = verseText(b, c, v);
-    $('verseRef').textContent = E.refLabel(b, c, v);
+  // The KJV, with its drop cap and its Psalm title, exactly as it has always
+  // been drawn. Lifted out of showVerse so the NLT can use the same stage.
+  function kjvInto(el, t, cap) {
     var first = t.charAt(0), rest = t.slice(1);
     if (t.charAt(0) === '[') { // Psalm titles like "[A Psalm of David.] The LORD…"
       var close = t.indexOf(']');
       first = t.charAt(close + 2) || t.charAt(0);
       rest = t.slice(0, close + 2) === '' ? rest : t.slice(t.indexOf(first, close) + 1);
-      $('verseText').innerHTML = '<span class="cap">' + esc(first) + '</span>' + esc(rest);
-      $('verseText').insertAdjacentHTML('afterbegin', '<div class="verse-foot" style="margin:0 0 8px">' + esc(t.slice(1, close)) + '</div>');
+      el.innerHTML = cap ? '<span class="cap">' + esc(first) + '</span>' + esc(rest) : esc(t.slice(close + 2));
+      if (cap) el.insertAdjacentHTML('afterbegin', '<div class="verse-foot" style="margin:0 0 8px">' + esc(t.slice(1, close)) + '</div>');
     } else {
-      $('verseText').innerHTML = '<span class="cap">' + esc(first) + '</span>' + esc(rest);
+      el.innerHTML = cap ? '<span class="cap">' + esc(first) + '</span>' + esc(rest) : esc(t);
     }
+  }
+  function plainInto(el, t, cap) {
+    if (cap) el.innerHTML = '<span class="cap">' + esc(t.charAt(0)) + '</span>' + esc(t.slice(1));
+    else el.textContent = t;
+  }
+
+  /* The reference line. The translation named on it is ALWAYS the translation
+     of the words underneath it — Decision 196's quiet lie is the app naming one
+     translation while showing another's words, and this is where that is
+     prevented. `name` of null leaves the line bare (the finished-plan screen). */
+  function refLine(text, name, both) {
+    $('verseRefText').textContent = text;
+    var sep = $('verseRefSep'), flip = $('btnFlip');
+    if (!name) { sep.style.display = 'none'; flip.style.display = 'none'; return; }
+    sep.style.display = ''; flip.style.display = '';
+    flip.textContent = both ? (name + ' + ' + both) : name;
+  }
+
+  /* Decision 192 — in Random mode the NLT is barred, so the two controls that
+     would promise it are not offered. The name still shows, because the reader
+     must always be able to see what he is reading; it simply does not move. */
+  function paintTools() {
+    var fixed = nltBarred();
+    $('btnCompare').style.display = fixed ? 'none' : '';
+    $('btnCompare').classList.toggle('on', cmpOn && !fixed);
+    $('btnFlip').disabled = fixed;
+  }
+
+  var lastFoot = '';
+  function showVerse(ref, foot) {
+    var b = ref[0], c = ref[1], v = ref[2];
+    lastFoot = foot || '';
+    var kjv = verseText(b, c, v);
+    var st = nltState(ref);
+    var nlt = nltTextFor(ref);
+    var showingKjv = (st !== 'nlt') || cmpOn;
+    var tEl = $('verseText'), aEl = $('verseAlt');
+
+    var cmp = cmpOn && !nltBarred();
+    $('verseStage').classList.toggle('two-up', cmp);
+    var onTop = nltTop();                      // which reading the flip has on top
+    // The second reading, quieter, under a rule and a name of its own.
+    function altBlock(label, words) {
+      aEl.style.display = '';
+      aEl.innerHTML = '';
+      var lab = document.createElement('div');
+      lab.className = 'alt-label';
+      lab.textContent = label;
+      var body = document.createElement('div');
+      body.className = 'alt-text';
+      if (!words) body.className = 'alt-text waiting-text';
+      body.textContent = words
+        ? ((words.charAt(0) === '[') ? words.slice(words.indexOf(']') + 2) : words)
+        : 'Loading the NLT…';
+      aEl.appendChild(lab); aEl.appendChild(body);
+    }
+
+    if (st === 'loading' && onTop) {
+      // Nothing is pretended while it is on its way. It says what it is doing.
+      tEl.innerHTML = '';
+      tEl.textContent = 'Loading the NLT…';
+      tEl.classList.add('waiting-text');
+      aEl.style.display = 'none';
+      refLine(E.refLabel(b, c, v), 'NLT', null);
+      $('btnFlip').classList.add('waiting');
+      showingKjv = false;
+    } else {
+      tEl.classList.remove('waiting-text');
+      $('btnFlip').classList.remove('waiting');
+      if (st === 'loading' && cmp) {
+        /* Compare with the King James on top: his own reading is here at once,
+           and the second one says for itself that it is still coming. */
+        kjvInto(tEl, kjv, true);
+        altBlock('New Living Translation', '');
+        refLine(E.refLabel(b, c, v), 'KJV', null);
+      } else if (st === 'nlt' && cmp) {
+        // Decision 197 — both readings stacked, and the flip decides the top.
+        if (onTop) plainInto(tEl, nlt, true); else kjvInto(tEl, kjv, true);
+        altBlock(onTop ? 'King James Version' : 'New Living Translation', onTop ? kjv : nlt);
+        refLine(E.refLabel(b, c, v), onTop ? 'NLT' : 'KJV', onTop ? 'KJV' : 'NLT');
+      } else if (st === 'nlt' && onTop) {
+        plainInto(tEl, nlt, true);
+        aEl.style.display = 'none';
+        refLine(E.refLabel(b, c, v), 'NLT', null);
+      } else {
+        // Scripture is never withheld because a connection failed — the KJV is
+        // here at once, and the line underneath says why it is the KJV.
+        kjvInto(tEl, kjv, true);
+        aEl.style.display = 'none';
+        refLine(E.refLabel(b, c, v), 'KJV', null);
+      }
+    }
+    paintNltLine(st);
+    paintTools();
+    if (nltWanted() && !nltOutToday()) nltEnsure(ref);
+    if (nltWanted() && !nltOutToday()) nltAhead(ref);
+
     // v13: the translators' margin note, separated from Scripture and shown
-    // only if the reader asked for it.
+    // only if the reader asked for it. They are the 1611 translators' notes and
+    // belong to the King James text, so they show only while it is on screen.
     var note = verseNote(b, c, v);
     var nEl = $('verseNote');
-    if (note && state.settings.showNotes) { nEl.textContent = note; nEl.style.display = ''; }
+    if (note && state.settings.showNotes && showingKjv) { nEl.textContent = note; nEl.style.display = ''; }
     else { nEl.textContent = ''; nEl.style.display = 'none'; }
 
     $('verseFoot').textContent = foot || '';
@@ -112,6 +210,41 @@
     maybeMarkHint();
     updatePrevButton();
     renderBadges();
+  }
+
+  /* The line that states what is true. Never an instruction, never an apology,
+     and never a promise the app cannot keep — Decision 202 deliberately does
+     NOT say "until tomorrow", because Tyndale do not publish their reset hour
+     and their midnight is the early morning in Lagos. */
+  function paintNltLine(st) {
+    var el = $('nltLine');
+    el.innerHTML = '';
+    var say = '';
+    if (st === 'off')     say = 'The NLT could not be reached. This is the King James Version.';
+    if (st === 'out')     say = 'Today\u2019s NLT readings are used up. The King James Version is here.';
+    if (st === 'missing') say = 'This verse is not in the New Living Translation. This is the King James Version.';
+    if (st === 'random')  say = 'Random verses stay in the King James Version.';
+    if (nltSaid) say = say ? (say + ' ' + nltSaid) : nltSaid;
+    if (!say) { el.style.display = 'none'; return; }
+    el.style.display = '';
+    el.appendChild(document.createTextNode(say));
+    // Decision 203 — the reader can tell him; nothing tells him on its own.
+    if (st === 'out' && LINKS.suggest) {
+      var a = document.createElement('a');
+      a.className = 'nlt-tell';
+      a.href = LINKS.suggest; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      a.textContent = '\u2192 Tell the developer';
+      el.appendChild(document.createElement('br'));
+      el.appendChild(a);
+      var note = document.createElement('span');
+      note.className = 'nlt-tell-note';
+      note.textContent = ' (opens Google Forms)';
+      el.appendChild(note);
+    }
+  }
+  function repaintVerse() {
+    var r = shownRef();
+    if (r) showVerse(r, lastFoot);
   }
 
   // v1.0.9 item 13 — the third line. The two above it say how far there is to
@@ -154,6 +287,243 @@
   function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
 
   /* ============================================================
+     v1.1.4 (NLT) — the New Living Translation
+     Decisions 192 (revised), 193-204. Build brief of 18 Sep 2026.
+
+     Not a feature. A person: a reader who found the KJV hard and
+     stopped reading. Everything here answers to that.
+
+     THE CHAPTER HABIT is the rule the whole thing rests on: fetch
+     the WHOLE chapter in one request and serve every verse from it.
+     Asked verse by verse, Psalm 119 alone would be 176 requests and
+     the day's allowance would be gone by the afternoon.
+     ============================================================ */
+  var NLT_KEY   = 'e24c2a7a-2e60-482a-8456-8e5b5eb83d8a';
+  var NLT_URL   = 'https://api.nlt.to/api/passages';
+  var NLT_WAIT  = 12000;   // one request is given this long, then it has failed
+  var NLT_AHEAD = 7;       // Decision 201, his number: verses from the chapter's end
+  var NLT_HOLD  = 4;       // chapters held in MEMORY only — never written to the phone
+
+  /* Tyndale's own spelling of the books. Two differ from DrawNigh's:
+     they say Psalm (proved by his own test) and Song of Songs.
+     NLT_ALT is a second spelling tried ONCE if the first returns nothing —
+     only John and Psalm have ever been proved against the real server, so
+     every numbered book is a guess until it is read on a phone. */
+  var NLT_BOOK = ['Genesis','Exodus','Leviticus','Numbers','Deuteronomy','Joshua','Judges','Ruth',
+    '1 Samuel','2 Samuel','1 Kings','2 Kings','1 Chronicles','2 Chronicles','Ezra','Nehemiah','Esther',
+    'Job','Psalm','Proverbs','Ecclesiastes','Song of Songs','Isaiah','Jeremiah','Lamentations','Ezekiel',
+    'Daniel','Hosea','Joel','Amos','Obadiah','Jonah','Micah','Nahum','Habakkuk','Zephaniah','Haggai',
+    'Zechariah','Malachi','Matthew','Mark','Luke','John','Acts','Romans','1 Corinthians','2 Corinthians',
+    'Galatians','Ephesians','Philippians','Colossians','1 Thessalonians','2 Thessalonians','1 Timothy',
+    '2 Timothy','Titus','Philemon','Hebrews','James','1 Peter','2 Peter','1 John','2 John','3 John',
+    'Jude','Revelation'];
+  var NLT_ALT = { 8:'1Sam', 9:'2Sam', 10:'1Kgs', 11:'2Kgs', 12:'1Chr', 13:'2Chr', 18:'Psalms',
+    21:'Song of Solomon', 45:'1Cor', 46:'2Cor', 51:'1Thes', 52:'2Thes', 53:'1Tim', 54:'2Tim',
+    59:'1Pet', 60:'2Pet', 61:'1Jn', 62:'2Jn', 63:'3Jn' };
+
+  var nltHave = {};     // 'b.c' -> { verseIndex: text }   held in memory only
+  var nltOrder = [];    // which chapters are held, oldest first
+  var nltAsking = {};   // 'b.c' -> promise, so one chapter is never asked for twice
+  var nltBad = {};      // 'b.c' -> true, a chapter that could not be reached
+  var nltName = {};     // book index -> the spelling this server answered to
+  var nltSaid = '';     // a one-off word to the reader about THIS verse
+  var flipHold = null;  // the flip: 'kjv' | 'nlt', lasts until the app is closed
+
+  function nltAt(b, c) { return b + '.' + c; }
+  function nltRefStr(b, c) { return (nltName[b] || NLT_BOOK[b]) + '.' + (c + 1); }
+
+  // Decision 195 — the flip says what is being read NOW; the setting says what
+  // the app opens in. Reopening returns to the setting, because the flip was
+  // never written down.
+  function nltChosen() {
+    if (flipHold) return flipHold === 'nlt';
+    return !!(state && state.settings && state.settings.translation === 'nlt');
+  }
+  function nltOutToday() { return !!(state && state.nlt && state.nlt.out === E.todayStr()); }
+  // Decision 192 — anything that arrives on its own, or jumps at random, stays KJV.
+  function nltBarred() { return mode === 'random'; }
+  /* The translation being READ — the one on top, the one the voice reads. */
+  function nltTop() { return nltChosen() && !nltBarred(); }
+  /* Whether the NLT words are needed at all. Compare asks for both readings
+     whichever way the flip points, so it counts as wanting them. */
+  function nltWanted() { return (nltChosen() || cmpOn) && !nltBarred(); }
+
+  /* The state of the verse on screen. Decision 196's whole point is that
+     these are never confused with one another:
+       kjv     — the King James Version, chosen and shown
+       nlt     — the NLT, chosen and shown
+       loading — chosen, on its way, nothing pretended
+       off     — chosen, could not be reached, KJV shown and SAID so
+       out     — chosen, the day's allowance is gone, KJV shown and said so
+       missing — this verse is not in the NLT at all, KJV shown and said so
+       random  — Random mode, which stays KJV by Decision 192 */
+  function nltState(ref) {
+    if (!nltChosen() && !cmpOn) return 'kjv';
+    if (nltBarred()) return 'random';
+    if (nltOutToday()) return 'out';
+    var at = nltAt(ref[0], ref[1]);
+    var ch = nltHave[at];
+    if (!ch) return nltBad[at] ? 'off' : 'loading';
+    var t = ch[ref[2]];
+    return t ? 'nlt' : 'missing';
+  }
+  function nltTextFor(ref) {
+    var ch = nltHave[nltAt(ref[0], ref[1])];
+    return (ch && ch[ref[2]]) ? ch[ref[2]] : '';
+  }
+
+  // ---- asking Tyndale ----
+  function nltGet(b, c) {
+    var at = nltAt(b, c);
+    if (nltHave[at]) return Promise.resolve({ ok: true });
+    if (nltAsking[at]) return nltAsking[at];
+    if (nltOutToday()) return Promise.resolve({ ok: false, why: 'out' });
+    var run = nltAskOnce(b, c, false).then(function (r) {
+      delete nltAsking[at];
+      if (r.ok) {
+        delete nltBad[at];
+        nltHave[at] = r.verses;
+        nltOrder.push(at);
+        while (nltOrder.length > NLT_HOLD) {
+          var old = nltOrder.shift();
+          if (old !== at && nltOrder.indexOf(old) < 0) delete nltHave[old];
+        }
+      } else {
+        nltBad[at] = true;
+        /* Decision 202 — unlike a lost connection this will not clear in a
+           minute, so the app stops asking for the rest of the day rather than
+           adding a failed pause to every chapter. It tries again tomorrow. */
+        if (r.why === 'out' && state) { state.nlt.out = E.todayStr(); save(); }
+      }
+      return r;
+    });
+    nltAsking[at] = run;
+    return run;
+  }
+
+  function nltAskOnce(b, c, second) {
+    var url = NLT_URL + '?ref=' + encodeURIComponent(nltRefStr(b, c)) + '&key=' + NLT_KEY;
+    var stop = null, timer = null;
+    try { if (typeof AbortController !== 'undefined') stop = new AbortController(); } catch (e) {}
+    timer = setTimeout(function () { if (stop) { try { stop.abort(); } catch (e) {} } }, NLT_WAIT);
+    /* No headers of any kind. A plain GET is what a browser will send across to
+       another site without asking it twice, and asking twice is a second trip. */
+    return fetch(url, stop ? { signal: stop.signal } : {}).then(function (res) {
+      return res.text().then(function (html) { return { code: res.status, ok: res.ok, html: html }; },
+                             function () { return { code: res.status, ok: res.ok, html: '' }; });
+    }).then(function (r) {
+      clearTimeout(timer);
+      var spent = /limit|exceed|quota|too many/i.test(r.html || '');
+      if (r.code === 429 || (!r.ok && spent)) return { ok: false, why: 'out' };
+      if (!r.ok) return { ok: false, why: 'off' };
+      var verses = nltRead(r.html), n = 0, q;
+      for (q in verses) n++;
+      if (!n) {
+        if (spent) return { ok: false, why: 'out' };
+        // The book may simply be spelled another way here. One second try, then stop.
+        if (!second && NLT_ALT[b]) { nltName[b] = NLT_ALT[b]; return nltAskOnce(b, c, true); }
+        if (second) delete nltName[b];
+        return { ok: false, why: 'off' };
+      }
+      return { ok: true, verses: verses };
+    }).catch(function () {
+      clearTimeout(timer);
+      return { ok: false, why: 'off' };
+    });
+  }
+
+  /* Tyndale send a page, not a list. Each verse arrives inside its own
+     <verse_export vn="16"> tag, with the verse number, the footnotes, the
+     section headings and the chapter title mixed in around it. Those are
+     theirs, not the verse, and they are lifted out — the words themselves are
+     never touched, which is Tyndale's own condition.
+
+     ⚠️ FOUND IN TESTING, and the reason this does not simply walk the page:
+     their paragraphs are NOT closed before the verse ends. Fed to a browser,
+     </verse_export> is then thrown away as a stray tag and one verse swallows
+     the next — Genesis 1:1 came back with 1:2 stuck on the end of it. So the
+     page is CUT INTO VERSES on the text first, at each <verse_export …>, and
+     only then is each piece read. Their own sample has the same unclosed
+     paragraphs, so this is how their pages really arrive. */
+  function nltRead(html) {
+    var out = {};
+    if (!html) return out;
+    var open = /<verse_export\b([^>]*)>/gi, marks = [], m;
+    while ((m = open.exec(html))) marks.push({ at: m.index, end: open.lastIndex, attrs: m[1] });
+    for (var i = 0; i < marks.length; i++) {
+      var stop = (i + 1 < marks.length) ? marks[i + 1].at : html.length;
+      var piece = html.slice(marks[i].end, stop);
+      var vn = 0;
+      var a = /\bvn\s*=\s*"([^"]*)"/i.exec(marks[i].attrs);
+      if (a) vn = parseInt(a[1], 10);
+      if (!vn) {
+        var o = /\borig\s*=\s*"([^"]*)"/i.exec(marks[i].attrs);
+        if (o) { var bits = o[1].split('_'); vn = parseInt(bits[bits.length - 1], 10); }
+      }
+      if (!vn) continue;
+      var t = nltClean(piece);
+      if (t) out[vn - 1] = t;
+    }
+    return out;
+  }
+  function nltClean(piece) {
+    var box = null;
+    try {
+      var doc = new DOMParser().parseFromString('<div id="dn-v">' + piece + '</div>', 'text/html');
+      box = doc.getElementById('dn-v');
+    } catch (e) { box = null; }
+    if (!box) return '';
+    var junk = box.querySelectorAll(
+      '.vn, .tn, .a-tn, .chapter-number, .subhead, .psa-title, .psa-title-hd, .psa-book, ' +
+      '.psa-hebrew, .sos-speaker, .text-critical, h1, h2, h3, h4');
+    for (var i = 0; i < junk.length; i++) if (junk[i].parentNode) junk[i].parentNode.removeChild(junk[i]);
+    /* Poetry arrives as separate lines. They are joined with a space, never
+       run together: "The Word was with God," + "and the Word was God." */
+    var blocks = box.querySelectorAll('p, div, li, td');
+    for (var j = 0; j < blocks.length; j++) {
+      if (blocks[j].previousSibling || blocks[j].parentNode !== box) {
+        blocks[j].insertAdjacentText('afterbegin', ' ');
+      }
+    }
+    var t = box.textContent || '';
+    return t.replace(/\s+/g, ' ').replace(/\s+([,.;:!?])/g, '$1').trim();
+  }
+
+  /* Decision 201 — one chapter ahead, always. His ruling: "I don't mind the
+     wasted fetch if it can take away that problem." A delay at every new
+     chapter is felt every time; a wasted fetch is felt by nobody.
+     The next chapter is whatever the READING goes to next — so a plan that
+     jumps to another book fetches the book it is actually going to. */
+  function nltAhead(ref) {
+    var b = ref[0], c = ref[1], v = ref[2];
+    var last = E.COUNTS[b][1][c] - 1;
+    if (last - v > NLT_AHEAD) return;
+    var next = stepFrom([b, c, last], 1);
+    if (!next && mode === 'book') next = E.bookNextRef(b, c, last);
+    if (!next) return;
+    if (next[0] === b && next[1] === c) return;
+    if (nltHave[nltAt(next[0], next[1])] || nltBad[nltAt(next[0], next[1])]) return;
+    nltGet(next[0], next[1]);
+  }
+
+  // Ask for what is on screen, and paint again when it lands — but only if the
+  // reader is still standing on that same chapter.
+  function nltEnsure(ref) {
+    var at = nltAt(ref[0], ref[1]);
+    if (nltHave[at] || nltBad[at]) return;
+    nltGet(ref[0], ref[1]).then(function () {
+      var now = shownRef();
+      if (now && nltAt(now[0], now[1]) === at) repaintVerse();
+    });
+  }
+  // Decision 196.4 — when the connection returns, the NLT loads and replaces it.
+  function nltTryAgain() {
+    nltBad = {};
+    var r = shownRef();
+    if (r && nltWanted() && !nltOutToday()) { nltEnsure(r); repaintVerse(); }
+  }
+
+  /* ============================================================
      v1.0.4 — the prayer timer
      Its value is not in stopping the reader. It is in giving them
      permission to stop watching the clock. It counts nothing.
@@ -178,7 +548,12 @@
        the prayer timer being switched on: they sit together because both belong
        to the verse on screen, not because one needs the other. */
     var listen = !!(state.settings && state.settings.audio) && speechOK();
-    $('praySlot').style.display = (on || listen) ? '' : 'none';
+    /* v1.1.4 (NLT) — FOUND IN TESTING: the slot held only the prayer timer and
+       the listen button, so with both switched off it was hidden — and it took
+       the new compare button down with it. Compare belongs to the verse, not to
+       either of them, so the slot now always stands and each button inside it
+       decides for itself. */
+    $('praySlot').style.display = '';
     $('btnPray').style.display = on ? '' : 'none';
     if (!on) $('prayLive').style.display = 'none';
     if (!on && E.prayActive(state)) endPray();
@@ -733,7 +1108,7 @@
         // and he chooses: draw again, or stop. Nothing rolls over silently,
         // because the returns are the whole point of the Well.
         if (E.isWell(plan)) { askWell(plan); return; }
-        $('verseRef').textContent = plan.name;
+        refLine(plan.name, null, null);
         $('verseText').innerHTML = '<span class="cap">F</span>inished! Every verse in this plan has been read. 🎉';
         $('verseNote').style.display = 'none';
         $('verseFoot').textContent = 'Start a new plan, or read on in Book or Random mode.';
@@ -755,6 +1130,7 @@
     }
     // A verse is counted when the reader moves past it with Next › —
     // a verse merely shown is never counted (same rule as the pop-up cards).
+    nltSaid = '';                 // the word about the last verse was about the last verse
     current = { ref: ref, counted: false, planId: planId };
     if (mode === 'random') {
       randTrail.push(current);
@@ -860,6 +1236,7 @@
       currentBook = p[0];                 // crossing books: the pill follows
       var bs = $('bookSelect'); if (bs) bs.value = String(currentBook);
     }
+    nltSaid = '';                 // the word about that verse was about that verse
     view = { ref: p, planId: current ? current.planId : null };
     showVerse(p, footFor(view));
     fillJump(p);
@@ -1272,6 +1649,26 @@
     if (n > 0) toastVerse('Marked ' + n.toLocaleString() + ' verses as read. The plan continues from the next verse.', 'Catch up');
   }
 
+  /* Decision 199 — a marked verse keeps the NLT words, so a Gem still reads as
+     it was read, offline, on a new phone, years later. Checked against
+     Tyndale's own two conditions BEFORE the save, so it cannot tip over them.
+     Past them the reference is kept and the reader is told plainly. */
+  function keepNltWords(r) {
+    if (E.nltWords(state, r[0], r[1], r[2])) return;
+    if (nltState(r) !== 'nlt') return;                 // KJV on screen: nothing to keep
+    var t = nltTextFor(r);
+    if (!t) return;
+    var got = E.nltKeep(state, r[0], r[1], r[2], t);
+    if (got.ok) return;
+    nltSaid = (got.why === 'book')
+      ? 'Kept as a reference. The NLT may not be held a whole book at a time, so the words come when you open the verse.'
+      : 'Kept as a reference. ' + E.NLT_CAP + ' NLT verses are already held \u2014 Tyndale\u2019s own limit \u2014 so the words come when you open the verse.';
+  }
+  function dropNltWords(r) {
+    if (E.isFavorite(state, r[0], r[1], r[2]) || E.isGem(state, r[0], r[1], r[2])) return;
+    E.nltDrop(state, r[0], r[1], r[2]);               // the last mark is gone; so are the words
+  }
+
   // ---------- Gems of Light — v1.0.9 (v16.1 §1) ----------
   // ONE list, newest first, every kept verse together, each carrying ⚡ or ♥ or
   // both. Two lists would be tidier on paper and would make a man choose a
@@ -1303,15 +1700,21 @@
       var f = r.ref;
       var row = document.createElement('div');
       row.className = 'fav-row';
-      var t = verseText(f[0], f[1], f[2]);
+      /* Decision 200 — a small NLT marker, and the words that were actually
+         kept. A row with no kept words shows the King James text and no
+         marker: the app never labels one translation and shows another's. */
+      var kept = E.nltWords(state, f[0], f[1], f[2]);
+      var t = kept || verseText(f[0], f[1], f[2]);
       var marks = (r.gem ? '<span class="gem-mark">⚡</span>' : '') + (r.fav ? '<span class="fav-mark">♥</span>' : '');
-      row.innerHTML = '<div><div class="ref">' + marks + E.refLabel(f[0], f[1], f[2]) + '</div>' +
+      row.innerHTML = '<div><div class="ref">' + marks + E.refLabel(f[0], f[1], f[2]) +
+        (kept ? '<span class="nlt-mark">NLT</span>' : '') + '</div>' +
         '<div class="txt">' + esc(t) + '</div></div><button title="Remove">✕</button>';
       row.querySelector('button').onclick = function (e) {
         e.stopPropagation();
         // Removing takes off whichever marks it carries — both, if it has both.
         if (r.fav) E.toggleFavorite(state, f[0], f[1], f[2]);
         if (r.gem) E.toggleGem(state, f[0], f[1], f[2]);
+        E.nltDrop(state, f[0], f[1], f[2]);        // the mark is gone; so are its words
         save(); renderFavs();
       };
       row.onclick = function () {
@@ -1354,6 +1757,14 @@
     // v1.0.9, Decision 77 — the confession door stands only while a claim does.
     $('confessRow').style.display = state.gapClaim ? '' : 'none';
     $('setDryMins').value = String(s.dryMins === undefined ? 5 : s.dryMins);
+    $('setTranslation').value = s.translation || 'kjv';
+    // Decision 199 — the count is shown only once it means something.
+    var keptNote = $('nltKeptNote'), n = E.nltKeptCount(state);
+    if (keptNote) {
+      keptNote.style.display = n ? '' : 'none';
+      keptNote.textContent = n + ' of ' + E.NLT_CAP + ' NLT verses kept with your marks.' +
+        (n >= E.NLT_CAP ? ' That is Tyndale\u2019s own limit; newer marks keep the reference, and the words come when you open the verse.' : '');
+    }
     renderAboutLinks();
   }
   // v1.0.0 ships with support links hidden.
@@ -1577,8 +1988,21 @@
   }
   function speakNow(ref) {
     if (!speechOK() || !ref) return;
+    /* The voice reads what the eye reads. If the NLT for this verse is still
+       on its way, the voice waits for it rather than speaking one translation
+       while the screen shows another. */
+    var at = nltAt(ref[0], ref[1]);
+    if (nltTop() && !nltOutToday() && !nltHave[at] && !nltBad[at]) {
+      nltGet(ref[0], ref[1]).then(function () {
+        var now = shownRef();
+        if (audioOn && now && now[0] === ref[0] && now[1] === ref[1] && now[2] === ref[2]) {
+          repaintVerse(); speakNow(ref);
+        }
+      });
+      return;
+    }
     try { speechSynthesis.cancel(); } catch (e) {}
-    var t = verseText(ref[0], ref[1], ref[2]);
+    var t = (nltTop() && nltState(ref) === 'nlt') ? nltTextFor(ref) : verseText(ref[0], ref[1], ref[2]);
     var parts = [];
     /* FINDING F5 — the chapter is named when the reading crosses into it.
        v18 §3 required this and it was never built: with the chapter stop turned
@@ -2754,7 +3178,7 @@
      F11 existed to end. The number matches the add-on it was built from; the
      word "Web" is what tells the two apart, because they are not identical:
      this build carries the long-press screen hold and the add-on does not. */
-  var WEB_VERSION = 'Web 1.1.4';
+  var WEB_VERSION = 'Web 1.1.4 (NLT)';
   function extVersion() { return WEB_VERSION; }
   function paintVersion() {
     var v = extVersion();
@@ -3145,7 +3569,7 @@
       b.onclick = function () { switchScreen(b.dataset.screen); };
     });
     document.querySelectorAll('.pill').forEach(function (p) {
-      p.onclick = function () { mode = p.dataset.mode; setPills(); view = null; randTrail = []; randPos = -1; current = null; serveNext(); };
+      p.onclick = function () { mode = p.dataset.mode; setPills(); view = null; randTrail = []; randPos = -1; current = null; nltSaid = ''; serveNext(); };
     });
     var bs = $('bookSelect');
     E.BOOKS.forEach(function (n, i) {
@@ -3166,6 +3590,43 @@
       jumpTo(currentBook, parseInt($('chapSelect').value, 10), parseInt(e.target.value, 10));
     };
 
+    /* Decision 197 — the flip lives on the reference line, where a translation
+       is named in ordinary Bible usage. It changes what is being read NOW and
+       holds until the app is closed; it never rewrites the saved setting,
+       because a stored setting must not change where nobody can see it. */
+    $('btnFlip').onclick = function (e) {
+      e.stopPropagation();                       // the stage behind it moves to the next verse
+      flipHold = nltChosen() ? 'kjv' : 'nlt';
+      nltSaid = '';
+      var r = shownRef();
+      if (r && nltWanted() && !nltOutToday()) nltEnsure(r);
+      repaintVerse();
+    };
+    /* Compare is a control and never a gesture. Every gesture was already
+       taken: a tap moves on, a double tap misfires into two taps, and he
+       already presses and holds the verse to keep the screen awake. */
+    $('btnCompare').onclick = function (e) {
+      e.stopPropagation();
+      cmpOn = !cmpOn;
+      $('btnCompare').classList.toggle('on', cmpOn);
+      var r = shownRef();
+      if (r && cmpOn && nltWanted() && !nltOutToday()) nltEnsure(r);
+      repaintVerse();
+    };
+    $('setTranslation').onchange = function (e) {
+      state.settings.translation = e.target.value;
+      flipHold = null;                           // the setting takes effect at once
+      save();
+      var r = shownRef();
+      if (r && nltWanted() && !nltOutToday()) nltEnsure(r);
+      repaintVerse();
+    };
+    // Decision 196.4 — when the connection returns, the NLT loads and replaces it.
+    window.addEventListener('online', nltTryAgain);
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) nltTryAgain();
+    });
+
     $('btnNext').onclick = serveNext;
     $('verseStage').onclick = serveNext;
     $('btnPrev').onclick = goPrev;
@@ -3174,7 +3635,8 @@
       var r = current.ref;
       var on = E.toggleFavorite(state, r[0], r[1], r[2]);
       $('btnFav').classList.toggle('on', on);
-      save(); maybeMarkHint();
+      if (on) keepNltWords(r); else dropNltWords(r);   // Decision 199
+      save(); maybeMarkHint(); paintNltLine(nltState(r));
     };
     // v1.0.9 — ⚡ a verse that arrested him. Independent of ♥: starred in March
     // and struck in July loses neither event.
@@ -3183,7 +3645,8 @@
       var r = current.ref;
       var on = E.toggleGem(state, r[0], r[1], r[2]);
       $('btnGem').classList.toggle('on', on);
-      save(); maybeMarkHint();
+      if (on) keepNltWords(r); else dropNltWords(r);   // Decision 199
+      save(); maybeMarkHint(); paintNltLine(nltState(r));
     };
     document.querySelectorAll('[data-gemfilter]').forEach(function (p) {
       p.onclick = function () {

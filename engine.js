@@ -167,6 +167,14 @@
     if (state.seasons === undefined)     state.seasons = { now: null, past: [] };
     if (state.room === undefined)        state.room = null;        // The Secret Place, sealed
     if (state.audioRun === undefined)    state.audioRun = null;    // where a reading aloud had reached
+    /* v1.1.4 (NLT), Decisions 195 and 199 — the translation the app OPENS in
+       (the flip on the reading screen is a sitting, and is never written down),
+       and the NLT words kept with a marked verse. `out` is the day the daily
+       allowance was found exhausted; it is a fact about today on this phone,
+       so it never travels in a backup code. */
+    if (s.translation === undefined)     s.translation = 'kjv';
+    if (state.nlt === undefined)         state.nlt = { kept: {}, out: null };
+    if (!state.nlt.kept)                 state.nlt.kept = {};
     seedLapFromHistory(state);                                     // v1.0.6
     repairCatchUpLaps(state);                                      // v1.1.0, finding 6
     // v1.0.9: history starts when dates start. Everything already earned on the
@@ -208,6 +216,64 @@
       fixed++;
     }
     return fixed;
+  }
+
+  /* ---------- v1.1.4 (NLT), Decision 199 — what may be kept ----------
+     A marked verse keeps its NLT words, under Tyndale's own two conditions:
+     never more than 500 verses, and never a complete book. The cap is THEIR
+     published free-quotation number, not one we chose, and it is checked
+     BEFORE each save so it cannot tip over. Jude is 25 verses and 3 John 14,
+     so a keen reader could complete one without trying. */
+  var NLT_CAP = 500;
+  function nltSlot(b, c, v) { return b + '.' + c + '.' + v; }
+  function nltStore(state) {
+    if (!state.nlt) state.nlt = { kept: {}, out: null };
+    if (!state.nlt.kept) state.nlt.kept = {};
+    return state.nlt.kept;
+  }
+  function nltKeptCount(state) { var k = nltStore(state), n = 0, q; for (q in k) n++; return n; }
+  function nltWords(state, b, c, v) {
+    var e = nltStore(state)[nltSlot(b, c, v)];
+    return (e && e.t) ? e.t : '';
+  }
+  function nltBookCount(state, b) {
+    var k = nltStore(state), n = 0, q;
+    for (q in k) if (parseInt(q, 10) === b) n++;
+    return n;
+  }
+  function bookVerseCount(b) { var r = bookRange(b); return r[1] - r[0]; }
+  function nltCanKeep(state, b, c, v) {
+    if (nltWords(state, b, c, v)) return { ok: true };
+    if (nltKeptCount(state) >= NLT_CAP) return { ok: false, why: 'cap' };
+    if (nltBookCount(state, b) + 1 >= bookVerseCount(b)) return { ok: false, why: 'book' };
+    return { ok: true };
+  }
+  function nltKeep(state, b, c, v, text) {
+    var can = nltCanKeep(state, b, c, v);
+    if (!can.ok) return can;
+    if (!text) return { ok: false, why: 'none' };
+    nltStore(state)[nltSlot(b, c, v)] = { t: String(text), v: 'NLT' };
+    return { ok: true };
+  }
+  function nltDrop(state, b, c, v) { delete nltStore(state)[nltSlot(b, c, v)]; }
+  /* A merge can carry two devices past either condition, so both are enforced
+     again on whatever the merge produced. Nothing is lost that matters: the
+     mark and the reference stay, and the words come back when the verse is
+     opened with a connection. */
+  function nltTrim(state) {
+    var k = nltStore(state), keys = Object.keys(k), i, dropped = 0;
+    var byBook = {};
+    for (i = 0; i < keys.length; i++) {
+      var b = parseInt(keys[i], 10);
+      (byBook[b] = byBook[b] || []).push(keys[i]);
+    }
+    for (var bb in byBook) {
+      var whole = bookVerseCount(parseInt(bb, 10));
+      while (byBook[bb].length >= whole) { delete k[byBook[bb].pop()]; dropped++; }
+    }
+    keys = Object.keys(k).sort();
+    while (keys.length > NLT_CAP) { delete k[keys.pop()]; dropped++; }
+    return dropped;
   }
 
   // ---------- v1.0.6: crediting reading done before badges existed ----------
@@ -1069,6 +1135,17 @@
        it exactly as a restore does. */
     out.room = mine.room || theirs.room || null;
 
+    /* v1.1.4 (NLT) — kept NLT words are unioned like every other mark, then
+       Tyndale's two conditions are applied to the result. `out.nlt.out` stays
+       this device's own: the allowance is shared between readers, but the
+       decision to stop asking for the rest of the day belongs to the phone
+       that met the refusal. */
+    out.nlt = { kept: {}, out: (mine.nlt && mine.nlt.out) || null };
+    [(theirs.nlt && theirs.nlt.kept) || {}, (mine.nlt && mine.nlt.kept) || {}].forEach(function (src) {
+      for (var nk in src) out.nlt.kept[nk] = src[nk];
+    });
+    nltTrim(out);
+
     // Settings stay this device's own — card position and pop-up timing
     // belong to the device, not to the reading.
     return out;
@@ -1501,7 +1578,11 @@
       // v1.1.0 — the day a mark was made, and the season a man is in.
       // The room is NOT here: it travels sealed, after a ~ (v0.4 §9).
       ma: packMarks(state.markAt),
-      se: state.seasons || null
+      se: state.seasons || null,
+      /* v1.1.4 (NLT) — the words kept with a marked verse travel with it, so a
+         Gem still reads as it was read on a new phone. The day-flag does not:
+         it is a fact about today on one phone. */
+      nl: (state.nlt && state.nlt.kept) || {}
     };
   }
   function fromPacked(p) {
@@ -1532,6 +1613,7 @@
       gapClaim: p.gc || null,
       markAt: unpackMarks(p.ma),
       seasons: p.se || { now: null, past: [] },
+      nlt: { kept: p.nl || {}, out: null },
       prayRun: null,                // a prayer belongs to the phone it was prayed on
       audioRun: null                // and so does a reading aloud
     };
@@ -1563,6 +1645,7 @@
     var s = JSON.parse(JSON.stringify(state));
     delete s.prayRun; delete s.gems; delete s.milestones; delete s.msBase; delete s.gapClaim;
     delete s.markAt; delete s.seasons; delete s.room; delete s.audioRun;      // v1.1.0
+    delete s.nlt;                                                             // v1.1.4 (NLT)
     return _encode(s, 'BB1.');
   }
 
@@ -2564,6 +2647,9 @@
     // verse's own words, and it must tidy them exactly as the lock does.
     normPin: normPin,
     audioMark: audioMark, repairCatchUpLaps: repairCatchUpLaps,
+    // v1.1.4 (NLT), Decision 199
+    NLT_CAP: NLT_CAP, nltKeptCount: nltKeptCount, nltWords: nltWords,
+    nltCanKeep: nltCanKeep, nltKeep: nltKeep, nltDrop: nltDrop, nltTrim: nltTrim,
     loadState: loadState, saveState: saveState, KEY: KEY
   };
 

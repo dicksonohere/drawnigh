@@ -57,7 +57,11 @@
       </div>
       <div class="verse-stage" id="verseStage" title="Tap for the next verse">
         <div class="ref-row">
-          <div class="verse-ref" id="verseRef"></div>
+          <!-- v1.1.4 (NLT), Decision 197: the flip lives on the reference line —
+               "Numbers 18:31 · KJV" — because that is where a translation is
+               named in ordinary Bible usage. The name shown here is ALWAYS the
+               name of the words underneath it. -->
+          <div class="verse-ref" id="verseRef"><span id="verseRefText"></span><span id="verseRefSep" style="display:none"> · </span><button class="flip-btn" id="btnFlip" title="Tap to change translation" style="display:none">KJV</button></div>
           <!-- v1.0.4: the prayer timer. It belongs to THIS verse, which is why it
                sits beside the reference and not among the navigation buttons. -->
           <div class="pray-slot" id="praySlot" style="display:none">
@@ -65,6 +69,10 @@
             <!-- v1.1.0 (v18): the voice already in the phone. Nothing is
                  downloaded and nothing is sent. A verse heard is a verse read. -->
             <button class="pray-btn listen-btn" id="btnListen" title="Read aloud" style="display:none">▶</button>
+            <!-- v1.1.4 (NLT), Decision 197: compare is a CONTROL, never a
+                 gesture — a tap already moves on, a double tap misfires into
+                 two taps, and a long press already holds the screen awake. -->
+            <button class="pray-btn cmp-btn" id="btnCompare" title="Show both translations">⇅</button>
             <span class="pray-live" id="prayLive" style="display:none">
               <button class="pray-left" id="prayLeft" title="Tap to pause">5:00</button>
               <button class="pray-stretch" id="btnPrayStretch">+5</button>
@@ -73,6 +81,12 @@
           </div>
         </div>
         <div class="verse-text" id="verseText"></div>
+        <!-- v1.1.4 (NLT): the second reading, when compare is on. -->
+        <div class="verse-alt" id="verseAlt" style="display:none"></div>
+        <!-- v1.1.4 (NLT), Decisions 196 and 202: the line that states what is
+             true. Never an instruction, and never a promise about a reset hour
+             Tyndale have not published. -->
+        <div class="nlt-line" id="nltLine" style="display:none"></div>
         <div class="verse-note" id="verseNote" style="display:none"></div>
         <div class="verse-foot" id="verseFoot"></div>
         <div class="verse-foot book-foot" id="verseBookFoot"></div>
@@ -223,6 +237,20 @@
           <button class="small-btn" id="setBadges">Badges</button>
           <button class="small-btn" id="setCatchUp">Catch me up</button>
         </div>
+      </div>
+
+      <!-- v1.1.4 (NLT), Decision 195: the setting is the translation the app
+           OPENS in, every time. The flip on the reading screen is a sitting —
+           it holds until the app is closed and never rewrites this. -->
+      <div class="setting">
+        <div class="row"><b>Translation</b>
+          <select id="setTranslation">
+            <option value="kjv">King James Version</option>
+            <option value="nlt">New Living Translation</option>
+          </select></div>
+        <p>The King James Version is inside the app and needs nothing. <b>The New Living Translation is plainer English, and it comes over the internet</b> from its publisher, Tyndale, a chapter at a time — roughly a photo's worth of data a day.</p>
+        <p style="margin-top:6px">Where it cannot be reached the King James Version is there at once and the app says why. On the reading screen, tap the translation's name beside the verse to change what you are reading now, and ⇅ to see both at once.</p>
+        <p class="note" id="nltKeptNote" style="display:none"></p>
       </div>
 
       <!-- WEB BUILD — dead here. A website cannot put a card onto other
@@ -398,7 +426,10 @@
         <div class="row"><b>💬 What should DrawNigh do next?</b></div>
         <p>Tell me what to build. Every version so far came from someone noticing something.</p>
         <p style="margin-top:8px"><a id="feedbackLink" href="#" target="_blank" rel="noopener noreferrer" style="color:var(--gold-bright)">Open the suggestion box →</a></p>
-        <div class="note">(opens Google Forms — this leaves DrawNigh. The app itself still sends nothing anywhere.)</div>
+        <!-- v1.1.4 (NLT): reworded. With the NLT switched on the app does
+               reach out — for a chapter, and for nothing else. The old sentence
+               would have become untrue the moment the NLT shipped. -->
+        <div class="note">(opens Google Forms — this leaves DrawNigh. The app itself sends nothing about you anywhere. With the New Living Translation switched on it asks Tyndale for the chapter you are reading, and nothing else.)</div>
       </div>
 
       <!-- v1.1.0 (v18). The voice already in the phone — nothing downloaded,
@@ -406,7 +437,7 @@
       <div class="setting">
         <div class="row"><b>🔊 Read aloud</b>
           <label class="toggle"><input type="checkbox" id="setAudio"></label></div>
-        <p>Your phone's own voice reads the verse. Nothing is downloaded and nothing leaves the device. <b>A verse heard is a verse read</b> — it counts toward your day, your streak and your plan, exactly like reading with your eyes.</p>
+        <p>Your phone's own voice reads the verse. No voice is downloaded and nothing about you leaves the device. <b>A verse heard is a verse read</b> — it counts toward your day, your streak and your plan, exactly like reading with your eyes.</p>
 
         <div class="row" style="margin-top:8px"><span>Stop at the end of each chapter</span>
           <label class="toggle"><input type="checkbox" id="setAudioStop"></label></div>
@@ -487,13 +518,17 @@
 
       <div class="setting">
         <div class="row"><b>About &amp; Support</b></div>
-        <p>DrawNigh — <i>Nearer to God, bit by bit.</i> King James Version. Free forever.<br>
+        <p>DrawNigh — <i>Nearer to God, bit by bit.</i> King James Version, with the New Living Translation when you choose it. Free forever.<br>
         <span id="aboutLinks"></span></p>
         <p class="note" id="aboutVersion"></p>
+        <!-- v1.1.4 (NLT), Decision 200: Tyndale's required notice, unabridged,
+             and in this one place. The reference line names the translation
+             verse by verse, so no copyright line is repeated over Scripture. -->
+        <p class="note" id="nltNotice" style="margin-top:10px">Scripture quotations marked (NLT) are taken from the Holy Bible, New Living Translation, copyright © 1996, 2004, 2015 by Tyndale House Foundation. Used by permission of Tyndale House Publishers, Carol Stream, Illinois 60188. All rights reserved.</p>
         <!-- v1.0.8: the same courtesy the suggestion box gets (v14.1 §3) — someone who
              chose an extension that collects nothing is told before the tap that the
              tap leaves it. Hidden entirely while LINKS.donate is empty. -->
-        <div class="note" id="donateNote" style="display:none">(opens Paystack — this leaves DrawNigh. The app itself still sends nothing anywhere.)</div>
+        <div class="note" id="donateNote" style="display:none">(opens Paystack — this leaves DrawNigh. The app itself sends nothing about you anywhere. With the New Living Translation switched on it asks Tyndale for the chapter you are reading, and nothing else.)</div>
         <p style="margin-top:6px" id="aboutVerse">“Draw nigh to God, and he will draw nigh to you.” — James 4:8</p>
       </div>
     </section>

@@ -10,8 +10,14 @@
    drawnigh-v3 → 84px header buffer + Quick access
    drawnigh-v4 → Web 1.1.4 — The Secret Place, reading aloud, seasons, the
                  square, and the long press that holds the screen light.
+   drawnigh-v5 → Web 1.1.4 (NLT) — the New Living Translation, fetched a
+                 chapter at a time from Tyndale. NOTE: the fetch handler below
+                 already ignores every address that is not this site's own, so
+                 api.nlt.to passes straight through and is never cached. That
+                 is deliberate: Scripture borrowed over a connection is not
+                 ours to keep on the phone.
 */
-var CACHE = 'drawnigh-v4';
+var CACHE = 'drawnigh-v5';
 var FILES = [
   '.',
   'index.html',

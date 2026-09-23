@@ -135,7 +135,47 @@ h2:first-child { margin-top: 4px; }
 .menu-item .waiting-dot { position: static; display: inline-block; margin-left: 7px; vertical-align: middle; }
 
 .ref-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 14px; }
-.ref-row .verse-ref { margin-bottom: 0; }
+/* v1.1.4 (NLT): the reference may now read "1 Thessalonians 5:23 · KJV + NLT",
+   which is long. It wraps rather than squeezing the buttons beside it. */
+.ref-row .verse-ref { margin-bottom: 0; flex: 1 1 auto; min-width: 0; }
+
+/* ---------- v1.1.4 (NLT) ---------- */
+/* The flip. Dashed, like the Catch-up chip: something to tap, not a label. */
+.flip-btn {
+  font: inherit; font-size: .95rem; letter-spacing: .1em; color: var(--gold);
+  border: 1px dashed transparent; border-radius: 6px; padding: 0 4px;
+}
+.flip-btn:hover { border-color: var(--gold); color: var(--gold-bright); }
+/* Chosen, but not here yet — and never drawn as though it were. */
+.flip-btn.waiting { color: var(--parchment-dim); font-style: italic; letter-spacing: .04em; }
+.cmp-btn { min-width: auto; padding: 4px 9px; }
+/* In Random mode the name still shows — it just does not move. */
+.flip-btn[disabled] { border-color: transparent; cursor: default; opacity: .85; }
+.cmp-btn.on { background: var(--gold); color: #1a1408; border-color: var(--gold); }
+.verse-text.waiting-text { font-size: 1.05rem; color: var(--parchment-dim); font-style: italic; }
+/* The second reading, quieter than the one the flip put on top. */
+/* Two readings fill the stage on their own, so it stops holding itself open —
+   otherwise the buttons underneath are pushed further down than they need be. */
+.verse-stage.two-up { min-height: 0; padding-top: 6px; }
+.verse-alt { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--ink-line); }
+.verse-alt .alt-label {
+  color: var(--gold); font-size: .72rem; letter-spacing: .12em;
+  text-transform: uppercase; margin-bottom: 6px;
+}
+.verse-alt .alt-text { font-size: 1.12rem; line-height: 1.5; color: var(--parchment); text-wrap: pretty; }
+/* The line that states what is true. Ember, so it is not read as Scripture. */
+.nlt-line {
+  margin-top: 14px; color: var(--ember); font-size: .82rem; font-style: italic;
+  line-height: 1.5;
+}
+.nlt-tell { color: var(--gold-bright); font-style: normal; text-decoration: none; }
+.nlt-tell-note { color: var(--parchment-dim); font-size: .76rem; font-style: normal; }
+/* Decision 200: a small marker, and nothing more, beside a kept NLT verse. */
+.nlt-mark {
+  margin-left: 7px; padding: 1px 5px; border-radius: 4px; font-size: .62rem;
+  letter-spacing: .1em; color: var(--ink); background: var(--gold);
+  vertical-align: middle;
+}
 .pray-slot { flex: none; }
 .pray-btn, .pray-stretch, .pray-cancel {
   font-size: .78rem; padding: 4px 9px; border-radius: 8px;
