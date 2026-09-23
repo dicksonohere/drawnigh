@@ -221,6 +221,7 @@
     el.innerHTML = '';
     var say = '';
     if (st === 'off')     say = 'The NLT could not be reached. This is the King James Version.';
+    if (st === 'wrong')   say = 'Tyndale sent a different edition, not the NLT. This is the King James Version.';
     if (st === 'out')     say = 'Today\u2019s NLT readings are used up. The King James Version is here.';
     if (st === 'missing') say = 'This verse is not in the New Living Translation. This is the King James Version.';
     if (st === 'random')  say = 'Random verses stay in the King James Version.';
@@ -300,6 +301,13 @@
      ============================================================ */
   var NLT_KEY   = 'e24c2a7a-2e60-482a-8456-8e5b5eb83d8a';
   var NLT_URL   = 'https://api.nlt.to/api/passages';
+  /* ⚠️ FOUND IN LIVE USE, 19 Sep 2026: the same server carries Tyndale's SPANISH
+     Bible, the NTV, and their King James too. Asked without naming one, it
+     answered this key in Spanish — the verse came through perfectly and was
+     simply the wrong Bible. Their documentation says version defaults to NLT;
+     for this key it did not. So the version is now always named, and never
+     assumed. Their values: NLT, NLTUK, NTV, KJV. */
+  var NLT_VERS  = 'NLT';
   var NLT_WAIT  = 12000;   // one request is given this long, then it has failed
   var NLT_AHEAD = 7;       // Decision 201, his number: verses from the chapter's end
   var NLT_HOLD  = 4;       // chapters held in MEMORY only — never written to the phone
@@ -325,6 +333,7 @@
   var nltOrder = [];    // which chapters are held, oldest first
   var nltAsking = {};   // 'b.c' -> promise, so one chapter is never asked for twice
   var nltBad = {};      // 'b.c' -> true, a chapter that could not be reached
+  var nltWrong = {};    // 'b.c' -> true, a chapter that came back as another Bible
   var nltName = {};     // book index -> the spelling this server answered to
   var nltSaid = '';     // a one-off word to the reader about THIS verse
   var flipHold = null;  // the flip: 'kjv' | 'nlt', lasts until the app is closed
@@ -363,7 +372,7 @@
     if (nltOutToday()) return 'out';
     var at = nltAt(ref[0], ref[1]);
     var ch = nltHave[at];
-    if (!ch) return nltBad[at] ? 'off' : 'loading';
+    if (!ch) return nltBad[at] ? (nltWrong[at] ? 'wrong' : 'off') : 'loading';
     var t = ch[ref[2]];
     return t ? 'nlt' : 'missing';
   }
@@ -390,6 +399,7 @@
         }
       } else {
         nltBad[at] = true;
+        if (r.why === 'wrong') nltWrong[at] = true;
         /* Decision 202 — unlike a lost connection this will not clear in a
            minute, so the app stops asking for the rest of the day rather than
            adding a failed pause to every chapter. It tries again tomorrow. */
@@ -402,7 +412,8 @@
   }
 
   function nltAskOnce(b, c, second) {
-    var url = NLT_URL + '?ref=' + encodeURIComponent(nltRefStr(b, c)) + '&key=' + NLT_KEY;
+    var url = NLT_URL + '?ref=' + encodeURIComponent(nltRefStr(b, c)) +
+              '&version=' + NLT_VERS + '&key=' + NLT_KEY;
     var stop = null, timer = null;
     try { if (typeof AbortController !== 'undefined') stop = new AbortController(); } catch (e) {}
     timer = setTimeout(function () { if (stop) { try { stop.abort(); } catch (e) {} } }, NLT_WAIT);
@@ -416,6 +427,8 @@
       var spent = /limit|exceed|quota|too many/i.test(r.html || '');
       if (r.code === 429 || (!r.ok && spent)) return { ok: false, why: 'out' };
       if (!r.ok) return { ok: false, why: 'off' };
+      var came = nltVersionOf(r.html);
+      if (came && came !== 'NLT' && came !== 'NLTUK') return { ok: false, why: 'wrong' };
       var verses = nltRead(r.html), n = 0, q;
       for (q in verses) n++;
       if (!n) {
@@ -445,6 +458,29 @@
      page is CUT INTO VERSES on the text first, at each <verse_export …>, and
      only then is each piece read. Their own sample has the same unclosed
      paragraphs, so this is how their pages really arrive. */
+  /* Every page Tyndale send declares which Bible it is — in the wrapper's class
+     ("NLT NLT BibleText section") and again in the heading ("John 3:16, NLT").
+     So the answer is checked, not trusted. Decision 196's rule is that the app
+     must never name one translation while showing another's words, and Spanish
+     verses under an NLT label would be exactly that.
+     An undeclared version is ACCEPTED: if their markup changes one day, the
+     reader should lose nothing. Only a positive wrong answer is refused. */
+  function nltVersionOf(html) {
+    var m = /id="bibletext"[^>]*class="([^"]*)"/i.exec(html);
+    if (!m) m = /class="([^"]*BibleText[^"]*)"/i.exec(html);
+    var hit = m ? m[1].toUpperCase() : '';
+    if (!hit) {
+      var h = /bk_ch_vs_header[^>]*>([^<]*)</i.exec(html);
+      hit = h ? h[1].toUpperCase() : '';
+    }
+    if (!hit) return '';
+    if (hit.indexOf('NTV') >= 0)   return 'NTV';
+    if (hit.indexOf('NLTUK') >= 0) return 'NLTUK';   // the NLT in UK English
+    if (hit.indexOf('NLT') >= 0)   return 'NLT';
+    if (hit.indexOf('KJV') >= 0)   return 'KJV';
+    return '';
+  }
+
   function nltRead(html) {
     var out = {};
     if (!html) return out;
@@ -518,7 +554,7 @@
   }
   // Decision 196.4 — when the connection returns, the NLT loads and replaces it.
   function nltTryAgain() {
-    nltBad = {};
+    nltBad = {}; nltWrong = {};
     var r = shownRef();
     if (r && nltWanted() && !nltOutToday()) { nltEnsure(r); repaintVerse(); }
   }

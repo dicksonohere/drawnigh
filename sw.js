@@ -16,8 +16,11 @@
                  api.nlt.to passes straight through and is never cached. That
                  is deliberate: Scripture borrowed over a connection is not
                  ours to keep on the phone.
+   drawnigh-v6 → Web 1.1.4 (NLT) — the version is now named in every request
+                 to Tyndale. Without it their server answered this key with the
+                 SPANISH Bible, and the verses arrived in Spanish.
 */
-var CACHE = 'drawnigh-v5';
+var CACHE = 'drawnigh-v6';
 var FILES = [
   '.',
   'index.html',
