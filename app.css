@@ -35,15 +35,18 @@ input, select { font-family: inherit; font-size: 1rem; }
    move — there is no CSS signal to react to, so this is a fixed guess at the
    banner's height. 44px was not enough; a long WhatsApp call's banner is
    taller. 84px was. The Quick access block in Settings is the other half of
-   that fix, and the half that needs no guess. */
+   that fix, and the half that needs no guess.
+   v1.1.5 — one stylesheet for both builds now: the buffer applies to the
+   website only (index.html carries class="is-web"); the add-on keeps 14px. */
 header {
   display: flex; align-items: baseline; justify-content: space-between;
-  padding: 84px 18px 10px;
+  padding: 14px 18px 10px;
   border-bottom: 1px solid var(--ink-line);
 }
+.is-web header { padding-top: 84px; }
 
-/* WEB BUILD — the long press must not raise the phone's text-selection menu,
-   and the button shows that it has armed. */
+/* The long press must not raise the phone's text-selection menu, and the
+   button shows that it has armed. (Both builds since v1.1.5.) */
 #btnListen { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 #btnListen.arming { opacity: .55; }
 .brand { font-size: 1.25rem; letter-spacing: .04em; color: var(--gold-bright); }
@@ -658,3 +661,32 @@ nav button.on { color: var(--gold-bright); }
   margin: -16px -16px 6px; padding: 16px 16px 8px;
   border-bottom: 1px solid var(--ink-line);
 }
+
+/* ---------- v1.1.5 ---------- */
+/* Decision 223 — the title box sits at the top of the blank letter. */
+.room-title {
+  width: 100%; box-sizing: border-box; margin: 4px 0 8px; padding: 9px 11px;
+  background: transparent; color: var(--parchment); font: inherit; font-size: 1.02rem;
+  border: 1px solid var(--ink-line); border-radius: 8px;
+}
+/* Decision 235 — the spare key, large enough to copy by hand without error. */
+.spare-words {
+  margin: 12px 0; padding: 14px 12px; text-align: center; line-height: 1.7;
+  font-size: 1.12rem; letter-spacing: .03em; color: var(--gold-bright);
+  border: 1px dashed var(--gold); border-radius: 10px; word-spacing: .12em;
+}
+#spareOverlay .edit-tick { display: flex; gap: 8px; align-items: flex-start; margin: 10px 0 4px; }
+#spareOverlay .edit-tick input { margin-top: 3px; flex: 0 0 auto; }
+#spareDone[disabled] { opacity: .45; }
+
+/* ---------- v1.1.6 ---------- */
+/* Decision 257, F7 — the "a name you choose" box takes the room's dark
+   colours: light writing on a dark box, like every other box in the room. */
+.cat-field input {
+  background: var(--ink); color: var(--parchment);
+  border: 1px solid var(--ink-line); border-radius: 8px; padding: 7px 9px;
+}
+.cat-field input::placeholder { color: var(--parchment-dim); opacity: .8; }
+/* Decision 257, F8 — the writing box uses the title box's own font. */
+#roomBox { font-family: var(--serif); font-size: 1.02rem; line-height: 1.55; }
+#roomBox::placeholder, .room-title::placeholder { color: var(--parchment-dim); opacity: .8; }

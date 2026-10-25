@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<!-- DrawNigh — the sign-in hand-back page (v1.1.5, Decision 247).
+     Google sends a DrawNigh ADD-ON reader here after signing in. The add-on's
+     own content script reads the sign-in from this page's address, hands it to
+     the add-on, and closes this tab. This page itself runs no script and sends
+     nothing anywhere. The website version of DrawNigh never comes here: it
+     receives its sign-in at its own address. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>DrawNigh — signed in</title>
+<style>
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+         background: #171310; color: #e8dcc0; font-family: Georgia, 'Times New Roman', serif; }
+  .card { max-width: 420px; padding: 28px 24px; text-align: center; line-height: 1.6; }
+  h1 { font-size: 1.3rem; color: #e9c46a; font-weight: normal; letter-spacing: .04em; }
+  p { margin: 10px 0; }
+  .small { font-size: .85rem; color: #a99a7c; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Draw<i>Nigh</i></h1>
+    <p>Signed in. This tab closes by itself and takes you back to DrawNigh.</p>
+    <p class="small">If it stays open, you can close it yourself — the sign-in has already reached DrawNigh.</p>
+  </div>
+</body>
+</html>

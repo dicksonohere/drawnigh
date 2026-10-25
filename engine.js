@@ -998,12 +998,23 @@
     // the lap is a union like globalRead, and a book's completion count takes
     // whichever device saw more. Merge stays safe in both directions.
     migrate(out); migrate(mine); migrate(theirs);
-    out.lap = orBits(mine.lap, theirs.lap, TOTAL_VERSES);
+    /* v1.1.5 — the lap is joined book by book. Where one side has finished a
+       book more times than the other, its lap for that book is the current
+       one and the other's is from an earlier pass: joining them would put an
+       old pass's verses into a new one. Equal counts are joined as before. */
+    var LA = bitsFromB64(mine.lap, TOTAL_VERSES), LB = bitsFromB64(theirs.lap, TOTAL_VERSES);
+    var LO = bitsNew(TOTAL_VERSES);
     for (var cb = 0; cb < 66; cb++) {
       var mc = (mine.completions && mine.completions[cb]) || 0;
       var tc = (theirs.completions && theirs.completions[cb]) || 0;
       if (mc || tc) out.completions[cb] = Math.max(mc, tc);
+      var lr = bookRange(cb);
+      for (var li = lr[0]; li < lr[1]; li++) {
+        var on = (mc > tc) ? bitGet(LA, li) : (tc > mc) ? bitGet(LB, li) : (bitGet(LA, li) || bitGet(LB, li));
+        if (on) bitSet(LO, li);
+      }
     }
+    out.lap = b64FromBits(LO);
     out.declared = Math.max(mine.declared || 0, theirs.declared || 0);
     out.declaredAsked = !!(mine.declaredAsked || theirs.declaredAsked);
     // The day log is a record of what WAS read; the fuller day wins.
@@ -1070,10 +1081,17 @@
         out.plans.push(copy);
         return;
       }
-      mine_.read = orBits(mine_.read, tp.read, mine_.size);
-      // The lower pointer is the safe one: planNextIndex skips read verses
-      // anyway, so nothing unread can be stranded behind it.
-      mine_.pointer = Math.min(mine_.pointer, tp.pointer);
+      /* v1.1.5 — a Well begins again at its first verse each time it is
+         drawn. The side that has drawn it more times holds the current draw;
+         the other's reading belongs to a finished one. */
+      var ml = mine_.laps || 0, tl = tp.laps || 0;
+      if (tl > ml) { mine_.read = tp.read; mine_.pointer = tp.pointer; mine_.laps = tl; }
+      else if (tl === ml) {
+        mine_.read = orBits(mine_.read, tp.read, mine_.size);
+        // The lower pointer is the safe one: planNextIndex skips read verses
+        // anyway, so nothing unread can be stranded behind it.
+        mine_.pointer = Math.min(mine_.pointer, tp.pointer);
+      }
       if (tp.todayDate === mine_.todayDate) mine_.todayCount = Math.max(mine_.todayCount, tp.todayCount);
       else if ((tp.todayDate || '') > (mine_.todayDate || '')) { mine_.todayDate = tp.todayDate; mine_.todayCount = tp.todayCount; }
     });
@@ -1142,7 +1160,12 @@
        that met the refusal. */
     out.nlt = { kept: {}, out: (mine.nlt && mine.nlt.out) || null };
     [(theirs.nlt && theirs.nlt.kept) || {}, (mine.nlt && mine.nlt.kept) || {}].forEach(function (src) {
-      for (var nk in src) out.nlt.kept[nk] = src[nk];
+      for (var nk in src) {
+        // v1.1.5, Decision 227 — a square carries the mark without the words.
+        // A copy that still has the words is never replaced by one without.
+        if (out.nlt.kept[nk] && out.nlt.kept[nk].t && !(src[nk] && src[nk].t)) continue;
+        out.nlt.kept[nk] = src[nk];
+      }
     });
     nltTrim(out);
 
@@ -1582,7 +1605,10 @@
       /* v1.1.4 (NLT) — the words kept with a marked verse travel with it, so a
          Gem still reads as it was read on a new phone. The day-flag does not:
          it is a fact about today on one phone. */
-      nl: (state.nlt && state.nlt.kept) || {}
+      nl: (state.nlt && state.nlt.kept) || {},
+      /* v1.1.5 — when each changeable thing last changed (sync, Decision 240).
+         An older DrawNigh reading this code ignores it, and loses nothing. */
+      w: state.lw || {}
     };
   }
   function fromPacked(p) {
@@ -1614,6 +1640,7 @@
       markAt: unpackMarks(p.ma),
       seasons: p.se || { now: null, past: [] },
       nlt: { kept: p.nl || {}, out: null },
+      lw: p.w || {},                // v1.1.5
       prayRun: null,                // a prayer belongs to the phone it was prayed on
       audioRun: null                // and so does a reading aloud
     };
@@ -1638,7 +1665,17 @@
     return JSON.parse(json);
   }
 
-  function exportCode(state) { return _encode(toPacked(state), 'BB2.'); }
+  function exportCode(state, opts) {
+    var p = toPacked(state);
+    // v1.1.5, Decision 227 — for the square: the mark on each kept NLT verse,
+    // without its words. The text code is untouched and still carries them.
+    if (opts && opts.marksOnly && p.nl) {
+      var m = {};
+      for (var k in p.nl) m[k] = { v: (p.nl[k] && p.nl[k].v) || 'NLT' };
+      p.nl = m;
+    }
+    return _encode(p, 'BB2.');
+  }
   // Kept so a v1.0.8 device can still be handed something it understands, and
   // so the tests can prove BB1. reading is untouched.
   function exportCodeV1(state) {
@@ -1823,8 +1860,26 @@
     if (!st) st = newStateFull();
     rollover(st); cb(st);
   }
+  /* v1.1.5, Decision 234 — the one place every write passes through, in the
+     app, the browsing card and the toolbar popup alike. While the room is open
+     its letters are in memory; they are NEVER written out as readable text.
+     What is written is the sealed copy (room.vault), kept current by the app.
+     A room made before v1.1.5 and not yet locked is left exactly as it was,
+     because its letters have no sealed copy yet and must not be lost. */
+  function storable(state) {
+    var r = state && state.room;
+    if (!r || !r.keys || !r.vault) return state;
+    if (r.entries === undefined && r.cats === undefined && r.seq === undefined && r.gone === undefined) return state;
+    var out = {}, k;
+    for (k in state) out[k] = state[k];
+    var rr = {};
+    for (k in r) if (k !== 'entries' && k !== 'cats' && k !== 'seq' && k !== 'gone') rr[k] = r[k];
+    out.room = rr;
+    return out;
+  }
   function saveState(state, cb) {
     var ext = _ext();
+    state = storable(state);
     if (ext) {
       var obj = {}; obj[KEY] = state;
       var res = ext.set(obj, cb || function () {});
@@ -2028,7 +2083,10 @@
       return String.fromCharCode(2, 0) + _u32(t.length) + t + String.fromCharCode(0);
     }
     var out = String.fromCharCode(1, ver) + _u32(body.length) + body;
-    if (parts.room) {
+    var r2 = (parts.room && String(parts.room).indexOf('R2.') === 0) ? _r2ToBinary(parts.room) : null;
+    if (r2 !== null) {
+      out += r2;
+    } else if (parts.room) {
       var seg = String(parts.room).split('.');       // R1.salt.iv.data
       out += String.fromCharCode(1);
       for (var k = 1; k < 4; k++) {
@@ -2039,6 +2097,61 @@
       out += String.fromCharCode(0);
     }
     return out;
+  }
+  /* v1.1.6 — found while measuring F6. A locked room (R2) was put into the
+     square as if it were an R1 room: split at its dots, which R2 does not
+     have, so it went in as base64 text inside JSON — about 40% bigger than it
+     needs to be — and came back out of the squares labelled R1, which no word
+     can open. A room carried by squares from v1.1.5 could not be opened on
+     the other phone. Now R2 has its own mark (2): its few plain fields as
+     text, and every locked part as raw bytes, the way R1's always were.
+     Mark 3 carries an R2 of some unexpected shape as plain text, whole. */
+  var R2_PARTS = [['w', 's'], ['w', 'i'], ['w', 'd'], ['s', 's'], ['s', 'i'], ['s', 'd']];
+  function _r2ToBinary(blob) {
+    var o;
+    try { o = JSON.parse(_atob(String(blob).slice(3))); } catch (e) { o = null; }
+    var asText = String.fromCharCode(3) + _u32(String(blob).length) + String(blob);
+    if (!o || !o.k || !o.k.w || !o.k.s || typeof o.V !== 'string') return asText;
+    var head = { id: o.id || '', rev: o.rev || 0, at: o.at || 0, v: o.k.v, m: o.k.m, L: o.L ? 1 : 0 };
+    var extra = false;
+    for (var kk in o.k) if (['v', 'm', 'w', 's'].indexOf(kk) < 0) extra = true;
+    if (extra) return asText;
+    try {
+      var out = String.fromCharCode(2), hj = JSON.stringify(head);
+      out += _u32(hj.length) + hj;
+      var parts = [];
+      R2_PARTS.forEach(function (p) { parts.push(o.k[p[0]][p[1]]); });
+      var sv = function (str) { var q = String(str).split('.'); if (q.length !== 2) throw new Error('shape'); parts.push(q[0]); parts.push(q[1]); };
+      if (o.L) sv(o.L);
+      sv(o.V);
+      for (var i = 0; i < parts.length; i++) {
+        var raw = _atob(parts[i] || '');
+        if (_btoa(raw) !== parts[i]) return asText;     // only exact round trips go as bytes
+        out += _u32(raw.length) + raw;
+      }
+      return out;
+    } catch (e) { return asText; }
+  }
+  function _r2FromBinary(bin, at) {
+    try {
+      if (bin.charCodeAt(at) === 3) {
+        var n3 = _readU32(bin, at + 1);
+        return bin.slice(at + 5, at + 5 + n3);
+      }
+      at++;
+      var hl = _readU32(bin, at); at += 4;
+      var head = JSON.parse(bin.slice(at, at + hl)); at += hl;
+      var count = R2_PARTS.length + (head.L ? 4 : 2), parts = [];
+      for (var i = 0; i < count; i++) {
+        var n = _readU32(bin, at); at += 4;
+        parts.push(_btoa(bin.slice(at, at + n))); at += n;
+      }
+      var k = { v: head.v, m: head.m, w: { s: parts[0], i: parts[1], d: parts[2] }, s: { s: parts[3], i: parts[4], d: parts[5] } };
+      var j = 6, L = null;
+      if (head.L) { L = parts[j] + '.' + parts[j + 1]; j += 2; }
+      var V = parts[j] + '.' + parts[j + 1];
+      return 'R2.' + _btoa(JSON.stringify({ id: head.id, rev: head.rev, at: head.at, k: k, L: L, V: V }));
+    } catch (e) { return null; }
   }
   function binaryToCode(bin) {
     if (!bin) return null;
@@ -2051,6 +2164,11 @@
     var len = _readU32(bin, 2), at = 6;
     var body = bin.slice(at, at + len); at += len;
     var code = 'BB' + ver + '.' + _btoa(body);
+    if (bin.charCodeAt(at) === 2 || bin.charCodeAt(at) === 3) {
+      var r2 = _r2FromBinary(bin, at);
+      if (r2) code += '~' + r2;
+      return code;
+    }
     if (bin.charCodeAt(at) === 1) {
       at++;
       var seg = ['R1'];
@@ -2267,7 +2385,10 @@
     return {
       door: door.slice(), knock: knock, made: todayStr(now),
       entries: [], cats: [], seq: 0,
-      badgeChoice: 'room',
+      /* v1.1.5, Decision 222 — badges default to the ⋮ menu, so nobody has to
+         make a room to see them. The three-way choice inside the room is
+         unchanged; badgeChosen records that a man chose, from now on. */
+      badgeChoice: 'menu', badgeChosen: false,
       reminder: null,
       // v1.1.2, Decision 128 (the vault) — whether the word panel offers the
       // door verse's words as chips at all. On by default, matching every
@@ -2278,10 +2399,15 @@
       pinCheck: null, sealed: null
     };
   }
-  function roomAddEntry(room, text, now) {
+  function roomAddEntry(room, text, now, dev) {
     room.seq = (room.seq || 0) + 1;
     var e = {
-      id: 'e' + room.seq, date: todayStr(now), title: '',
+      /* v1.1.5 — with sync, two devices can each write a letter while apart.
+         The device's own short mark keeps their ids from ever colliding; a
+         letter written before this keeps the id it has. `at` is when the
+         letter last changed, so the later of two edits stands. */
+      id: 'e' + room.seq + (dev ? '.' + dev : ''), at: now ? new Date(now).getTime() : Date.now(),
+      date: todayStr(now), title: '',
       body: String(text == null ? '' : text),
       letter: false, struggle: false, testimony: false, other: false,
       cats: [], open: false, endNote: '', endAt: null, endIsTestimony: false,
@@ -2578,6 +2704,418 @@
     state.audioRun = ref ? { ref: ref.slice(), at: Date.now() } : null;
   }
 
+  /* ================= v1.1.5 — THE ROOM LOCKED ON THE DEVICE =================
+     Decisions 234–237. Until now the word locked the room's DOOR, and the
+     letters sat behind it as ordinary readable text in this device's storage.
+     Only the travelling backup code was sealed. His ruling, 25 September:
+     "People will be writing secret things to God and some will be very
+     scandalous. The safety is a must."
+
+     THE SHAPE, AND WHY IT IS THIS SHAPE.
+     The letters are sealed with a random key of their own (the "letter key").
+     That key is itself sealed twice: once with the room's word, and once with
+     the spare key — eight plain words shown once, at the making, and never kept
+     by the app (Decision 235). Either opens the room. Changing the word reseals
+     only the small letter key, never the letters; the spare key keeps working
+     across a change of word, which is the whole point of a spare.
+
+     WHAT STAYS READABLE ON THE DEVICE. The door verse, the knock and the
+     room's own settings stay as they were, because the knock must be checked
+     silently BEFORE any word is asked for — a door that asked first would tell
+     a stranger what he had reached. The letters, the categories and their
+     seals are what is locked. In a backup code and in sync, the door and the
+     knock are locked too, exactly as v0.4 §9 always required.
+
+     Word handling (Decision 236): capitals do not count by default — the same
+     rule the room has used since v1.1.3 — and a switch in the room's settings
+     makes them count. Stray spaces at either end never count. */
+
+  var VAULT_ITER = 310000;
+  var SPARE_WORDS = ('ark ash axe bag barn bead beam bean bear bed bee bell belt bench berry bird ' +
+    'blade bloom boat bone book bow bowl box branch bread brick bridge brook broom bud bush cake ' +
+    'calf camel candle cart cave cedar chain chair chalk cheese chest cliff cloak clock cloud coal ' +
+    'coat coin colt cord corn couch cow crab crown cup dawn deer desk dew dish dog door dove drum ' +
+    'duck dust eagle ear earth egg elm ember eye falcon farm feast feather fence fern field fig fire ' +
+    'fish flag flame flask flax flint flock flour flute foal fog forest fork fox frog fruit garden ' +
+    'gate gem glass glove goat gold gourd grape grass grove gull hall hammer harp hat hawk hay hen ' +
+    'hill hive honey hook horn horse house ink iron ivy jar jewel kettle key king kite knot ladder ' +
+    'lake lamb lamp lark leaf lemon lily lion loaf lock loom maple map mast meadow melon mill mint ' +
+    'moon moss mule nail nest net oak oar oat olive onion orchard otter owl ox palm path pear pearl ' +
+    'pebble pen pepper pine pipe plow plum pond pot quail quill rain ram raven reed ring river road ' +
+    'robe rock roof root rope rose sail salt sand scroll sea seed sheep shell shield ship shoe silk ' +
+    'silver sky sling snow sparrow spear spice spoon spring star staff stone stool straw stream sun ' +
+    'swan sword table tent thorn thread tower tree trumpet valley vine wagon wall water well whale ' +
+    'wheat wheel willow wind window wine wing wolf wood wool yarn yoke').split(' ');
+
+  // The word, tidied the way the lock reads it. 'any' ignores capitals (the
+  // default, and every room made before this switch existed); 'exact' keeps
+  // them. Spaces at the ends never count, in either mode.
+  function wordForLock(word, mode) {
+    if (mode === 'exact') return String(word == null ? '' : word).replace(/\s+/g, ' ').trim();
+    return normPin(word);
+  }
+  // The spare key is read forgivingly: capitals, dots, commas, dashes and
+  // extra spaces between the words are all ignored, because it will be copied
+  // by hand off a scrap of paper.
+  function spareTidy(s) {
+    return String(s == null ? '' : s).toLowerCase().replace(/[^a-z]+/g, ' ').trim();
+  }
+  function spareLooksLike(s) {
+    var w = spareTidy(s).split(' ');
+    if (w.length !== 8) return false;
+    for (var i = 0; i < w.length; i++) if (SPARE_WORDS.indexOf(w[i]) < 0) return false;
+    return true;
+  }
+  function spareMake() {
+    var c = _crypto();
+    if (!c) return null;
+    var pick = c.getRandomValues(new Uint8Array(8)), out = [];
+    for (var i = 0; i < 8; i++) out.push(SPARE_WORDS[pick[i] % SPARE_WORDS.length]);
+    return out.join(' ');
+  }
+  function _kek(c, secret, salt) {
+    return c.subtle.importKey('raw', new TextEncoder().encode(String(secret)), 'PBKDF2', false, ['deriveKey'])
+      .then(function (base) {
+        return c.subtle.deriveKey({ name: 'PBKDF2', salt: salt, iterations: VAULT_ITER, hash: 'SHA-256' },
+          base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+      });
+  }
+  function _aes(c, raw) {
+    return c.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+  }
+  // Seal the letter key under one secret. {s: salt, i: iv, d: sealed key}.
+  function _wrapUnder(c, dek, secret) {
+    var salt = c.getRandomValues(new Uint8Array(16)), iv = c.getRandomValues(new Uint8Array(12));
+    return _kek(c, secret, salt).then(function (k) {
+      return c.subtle.encrypt({ name: 'AES-GCM', iv: iv }, k, dek);
+    }).then(function (buf) {
+      return { s: _bytesToB64(salt), i: _bytesToB64(iv), d: _bytesToB64(new Uint8Array(buf)) };
+    });
+  }
+  function _unwrapUnder(c, w, secret) {
+    if (!w || !w.s) return Promise.reject(new Error('no-wrap'));
+    return _kek(c, secret, _b64ToBytes(w.s)).then(function (k) {
+      return c.subtle.decrypt({ name: 'AES-GCM', iv: _b64ToBytes(w.i) }, k, _b64ToBytes(w.d));
+    }).then(function (buf) { return new Uint8Array(buf); });
+  }
+  function _sealWith(c, dek, obj) {
+    var iv = c.getRandomValues(new Uint8Array(12));
+    return _aes(c, dek).then(function (k) {
+      return c.subtle.encrypt({ name: 'AES-GCM', iv: iv }, k, new TextEncoder().encode(JSON.stringify(obj)));
+    }).then(function (buf) { return _bytesToB64(iv) + '.' + _bytesToB64(new Uint8Array(buf)); });
+  }
+  function _openWith(c, dek, str) {
+    var p = String(str || '').split('.');
+    if (p.length !== 2) return Promise.reject(new Error('bad-seal'));
+    return _aes(c, dek).then(function (k) {
+      return c.subtle.decrypt({ name: 'AES-GCM', iv: _b64ToBytes(p[0]) }, k, _b64ToBytes(p[1]));
+    }).then(function (buf) { return JSON.parse(new TextDecoder().decode(buf)); });
+  }
+
+  // A new letter key, sealed under the word and under a fresh spare key.
+  // Resolves {dek, keys, spare}. The spare is handed back ONCE, to be shown,
+  // and is never written anywhere by the app.
+  function vaultCreate(word, mode) {
+    var c = _crypto();
+    if (!c) return Promise.reject(new Error('no-crypto'));
+    var dek = c.getRandomValues(new Uint8Array(32));
+    var spare = spareMake();
+    var m = (mode === 'exact') ? 'exact' : 'any';
+    return Promise.all([_wrapUnder(c, dek, wordForLock(word, m)), _wrapUnder(c, dek, spareTidy(spare))])
+      .then(function (w) { return { dek: dek, spare: spare, keys: { v: 2, m: m, w: w[0], s: w[1] } }; });
+  }
+  /* Opens the letter key with whatever was typed into the word box.
+     The spare key is typed into the SAME box, deliberately: a separate "use
+     your spare key" button at the door would tell a stranger which panel he
+     had reached. Eight words from the spare list are tried as a spare first;
+     anything else is tried as the word. Resolves {dek, via:'word'|'spare'}. */
+  function vaultOpen(keys, typed) {
+    var c = _crypto();
+    if (!c) return Promise.reject(new Error('no-crypto'));
+    if (!keys || !keys.w) return Promise.reject(new Error('no-keys'));
+    var asWord = function () {
+      return _unwrapUnder(c, keys.w, wordForLock(typed, keys.m)).then(function (dek) { return { dek: dek, via: 'word' }; });
+    };
+    var asSpare = function () {
+      return _unwrapUnder(c, keys.s, spareTidy(typed)).then(function (dek) { return { dek: dek, via: 'spare' }; });
+    };
+    if (spareLooksLike(typed)) return asSpare().catch(asWord);
+    return asWord();
+  }
+  // A new word (or the same word under the other capitals rule). The spare
+  // key's half is untouched, so the spare written down at the making still
+  // works afterwards.
+  function vaultRewrap(keys, dek, word, mode) {
+    var c = _crypto();
+    if (!c) return Promise.reject(new Error('no-crypto'));
+    var m = (mode === 'exact') ? 'exact' : 'any';
+    return _wrapUnder(c, dek, wordForLock(word, m)).then(function (w) {
+      return { v: 2, m: m, w: w, s: keys.s };
+    });
+  }
+  function vaultSeal(dek, obj) {
+    var c = _crypto();
+    if (!c) return Promise.reject(new Error('no-crypto'));
+    return _sealWith(c, dek, obj);
+  }
+  function vaultUnseal(dek, str) {
+    var c = _crypto();
+    if (!c) return Promise.reject(new Error('no-crypto'));
+    return _openWith(c, dek, str);
+  }
+  // What is locked: the letters, the categories (their names are part of what
+  // a man wrote) and the seals on both. Deleted letters leave a tombstone so a
+  // second device cannot hand them back (sync, Decision 240).
+  function roomContents(room) {
+    return { entries: room.entries || [], cats: room.cats || [], seq: room.seq || 0, gone: room.gone || {} };
+  }
+  // What stays readable on this device, and is locked in a code or in sync.
+  function roomLocks(room) {
+    return {
+      door: room.door, knock: room.knock, made: room.made,
+      badgeChoice: room.badgeChoice || 'menu', badgeChosen: !!room.badgeChosen,
+      reminder: room.reminder || null,
+      wordShape: room.wordShape || 'typed', hint: room.hint || '',
+      showWords: room.showWords !== false
+    };
+  }
+  function roomIsLocked(room) { return !!(room && room.keys && room.vault); }
+
+  /* A room as it travels — in a backup code after the ~, and in sync. R2 has
+     the letter key sealed twice, and the locks and the letters sealed under
+     it, with only what a merge needs left plain: the room's identity, how many
+     times it has changed, and when. R1 (every code made before v1.1.5) still
+     opens, with the word, exactly as it always did. */
+  function roomBlob(room) {
+    if (!roomIsLocked(room) || !room.lockVault) return null;
+    return 'R2.' + _btoa(JSON.stringify({
+      id: room.id || '', rev: room.rev || 0, at: room.at || 0,
+      k: room.keys, L: room.lockVault, V: room.vault
+    }));
+  }
+  function roomBlobRead(str) {
+    var s = String(str || '');
+    if (s.indexOf('R1.') === 0) return { kind: 'R1', blob: s };
+    if (s.indexOf('R2.') === 0) {
+      try {
+        var o = JSON.parse(_atob(s.slice(3)));
+        if (!o || !o.k || !o.V) return null;
+        return { kind: 'R2', id: o.id || '', rev: o.rev || 0, at: o.at || 0, keys: o.k, lockVault: o.L || null, vault: o.V };
+      } catch (e) { return null; }
+    }
+    return null;
+  }
+  /* Opens a travelling R2 room with the word or the spare key. Resolves
+     {room, dek, via}: a room in the on-device shape, its letters in hand. */
+  function roomFromBlob(info, typed) {
+    return vaultOpen(info.keys, typed).then(function (got) {
+      return Promise.all([
+        info.lockVault ? vaultUnseal(got.dek, info.lockVault) : Promise.resolve({}),
+        vaultUnseal(got.dek, info.vault)
+      ]).then(function (both) {
+        var L = both[0] || {}, V = both[1] || {};
+        var room = {
+          door: L.door || null, knock: L.knock || null, made: L.made || null,
+          badgeChoice: L.badgeChoice || 'menu', badgeChosen: !!L.badgeChosen,
+          reminder: L.reminder || null, wordShape: L.wordShape || 'typed',
+          hint: L.hint || '', showWords: L.showWords !== false,
+          id: info.id || '', rev: info.rev || 0, at: info.at || 0,
+          keys: info.keys, lockVault: info.lockVault, vault: info.vault,
+          entries: V.entries || [], cats: V.cats || [], seq: V.seq || 0, gone: V.gone || {},
+          pinCheck: null, sealed: null
+        };
+        return { room: room, dek: got.dek, via: got.via };
+      });
+    });
+  }
+  /* Two copies of the same room, both opened (sync, Decision 238). Letters
+     are matched by their id; where both copies hold the same letter, the one
+     changed later stands. A letter deleted on either side stays deleted.
+     Categories are matched by name and the later seal stands. */
+  function roomMergeContents(a, b) {
+    var out = { entries: [], cats: [], seq: Math.max(a.seq || 0, b.seq || 0), gone: {} };
+    [a.gone || {}, b.gone || {}].forEach(function (g) {
+      for (var id in g) out.gone[id] = Math.max(out.gone[id] || 0, g[id] || 0);
+    });
+    var byId = {}, order = [];
+    (a.entries || []).concat(b.entries || []).forEach(function (e) {
+      if (!e || !e.id) return;
+      var had = byId[e.id];
+      if (!had) { byId[e.id] = e; order.push(e.id); return; }
+      if ((e.at || 0) > (had.at || 0)) byId[e.id] = e;
+    });
+    order.forEach(function (id) {
+      var e = byId[id];
+      if (out.gone[id] && out.gone[id] >= (e.at || 0)) return;
+      out.entries.push(e);
+    });
+    var cats = {}, cOrder = [];
+    (a.cats || []).concat(b.cats || []).forEach(function (cat) {
+      if (!cat || !cat.name) return;
+      var had = cats[cat.name];
+      if (!had) { cats[cat.name] = cat; cOrder.push(cat.name); return; }
+      var ta = (typeof had.sealedAt === 'number') ? had.sealedAt : 0;
+      var tb = (typeof cat.sealedAt === 'number') ? cat.sealedAt : 0;
+      if (tb > ta) cats[cat.name] = cat;
+    });
+    cOrder.forEach(function (n) { out.cats.push(cats[n]); });
+    return out;
+  }
+
+  /* ================= v1.1.5 — SYNC: COPIES COMBINE (Decisions 238–242) =================
+     A union is enough for everything that only ever grows — a verse read is
+     read, on either device, for ever. It is NOT enough for the things a man
+     changes his mind about: a ♥ taken off, a plan deleted, a bookmark moved
+     back, a daily number lowered. A union quietly hands those back the next
+     time the other device syncs, and "I removed it and it came back" is the
+     first thing a reader would notice.
+
+     So each of those carries a stamp: the moment it last changed, and whether
+     it was there or taken away. Two copies combine by union first (mergeStates,
+     the same Merge a backup code has always used), and then, thing by thing,
+     the later change stands. The stamps are written by comparing the state
+     before and after every save, so no screen has to remember to write one. */
+
+  function planKey(p) { return (p.name || '') + '|' + (p.scopeType || '') + '|' + (p.size || 0); }
+  function planEdits(p) {
+    return JSON.stringify([p.target || null, p.days || null, !!p.countEverything, !!p.featured]);
+  }
+  // What can change its mind, as it stands now.
+  function lwwSnap(state) {
+    var s = { f: {}, g: {}, p: {}, e: {}, o: {}, a: '', z: '' };
+    (state.favorites || []).forEach(function (r) { s.f[r.join(':')] = 1; });
+    (state.gems || []).forEach(function (r) { s.g[r.join(':')] = 1; });
+    (state.plans || []).forEach(function (p) { var k = planKey(p); s.p[k] = 1; s.e[k] = planEdits(p); });
+    var pos = state.positions || {};
+    for (var b in pos) s.o[b] = String(pos[b]);
+    var ap = state.activePlanId ? getPlan(state, state.activePlanId) : null;
+    s.a = ap ? planKey(ap) : '';
+    var sn = state.seasons && state.seasons.now;
+    s.z = sn ? JSON.stringify(sn) : '';
+    return s;
+  }
+  // Stamps what changed between `prev` and the state as it stands, and returns
+  // the new snapshot. With no `prev` it only takes the snapshot.
+  function lwwTrack(prev, state, now) {
+    var cur = lwwSnap(state);
+    if (!prev) return cur;
+    var t = now ? new Date(now).getTime() : Date.now();
+    var lw = state.lw || (state.lw = {});
+    function setStamp(key, alive) { lw[key] = [t, alive ? 1 : 0]; }
+    function diffSet(letter, a, b) {
+      var k;
+      for (k in b) if (!a[k]) setStamp(letter + '|' + k, true);
+      for (k in a) if (!b[k]) setStamp(letter + '|' + k, false);
+    }
+    diffSet('f', prev.f, cur.f);
+    diffSet('g', prev.g, cur.g);
+    diffSet('p', prev.p, cur.p);
+    var k;
+    for (k in cur.e) if (prev.e[k] !== undefined && prev.e[k] !== cur.e[k]) lw['s|' + k] = [t, 1];
+    for (k in cur.o) if (prev.o[k] !== cur.o[k]) lw['o|' + k] = [t, 1];
+    if (prev.a !== cur.a) lw['a'] = [t, 1, cur.a];
+    if (prev.z !== cur.z) lw['z'] = [t, 1];
+    return cur;
+  }
+  function lwwWhen(lw, key) { var v = lw && lw[key]; return v ? v[0] : 0; }
+
+  /* Two copies of the reading, combined. `mine` is this device and keeps
+     everything that belongs to the device (settings, a prayer under way, the
+     room); `theirs` came down from the reader's own Google Drive. */
+  function syncMerge(mine, theirs) {
+    migrate(mine); migrate(theirs);
+    var out = mergeStates(mine, theirs);
+    var A = mine.lw || {}, B = theirs.lw || {};
+    var lw = {}, key;
+    for (key in A) lw[key] = A[key];
+    for (key in B) if (!lw[key] || B[key][0] > lw[key][0]) lw[key] = B[key];
+    out.lw = lw;
+    function alive(letter, k) { var v = lw[letter + '|' + k]; return !v || v[1] === 1; }
+
+    // Marks taken away stay taken away; marks made again after that stand.
+    out.favorites = out.favorites.filter(function (r) { return alive('f', r.join(':')); });
+    out.gems = (out.gems || []).filter(function (r) { return alive('g', r.join(':')); });
+
+    // Plans deleted on either device stay deleted.
+    var gone = {};
+    out.plans = out.plans.filter(function (p) {
+      var ok = alive('p', planKey(p));
+      if (!ok) gone[p.id] = 1;
+      return ok;
+    });
+    // As the Remove button does: a removed plan that was being read hands the
+    // reading to the first plan left.
+    if (out.activePlanId && gone[out.activePlanId]) out.activePlanId = out.plans.length ? out.plans[0].id : null;
+
+    // A plan's daily number, end date and switches: the later change stands.
+    out.plans.forEach(function (p) {
+      var k = planKey(p);
+      if (lwwWhen(B, 's|' + k) > lwwWhen(A, 's|' + k)) {
+        (theirs.plans || []).forEach(function (tp) {
+          if (planKey(tp) === k) {
+            p.target = tp.target; p.days = tp.days;
+            p.countEverything = !!tp.countEverything; p.featured = !!tp.featured;
+          }
+        });
+      }
+    });
+
+    // Bookmarks in each book: the later move stands, forward or back. With no
+    // stamp on either side (anything from before v1.1.5) the further one
+    // stands, as Merge has always done.
+    var books = {};
+    for (key in (mine.positions || {})) books[key] = 1;
+    for (key in (theirs.positions || {})) books[key] = 1;
+    for (key in books) {
+      var ta = lwwWhen(A, 'o|' + key), tb = lwwWhen(B, 'o|' + key);
+      if (tb > ta && theirs.positions && theirs.positions[key]) out.positions[key] = theirs.positions[key].slice();
+      else if (ta > tb && mine.positions && mine.positions[key]) out.positions[key] = mine.positions[key].slice();
+    }
+
+    // The plan being read: the later choice stands.
+    if (lwwWhen(B, 'a') > lwwWhen(A, 'a')) {
+      var want = B['a'][2] || '';
+      out.activePlanId = null;
+      out.plans.forEach(function (p) { if (want && planKey(p) === want) out.activePlanId = p.id; });
+    }
+
+    // The season a man is in: the later one stands; every former season is
+    // kept either way (mergeSeasons).
+    if (lwwWhen(B, 'z') > lwwWhen(A, 'z') && theirs.seasons) {
+      out.seasons = mergeSeasons(theirs.seasons, mine.seasons);
+    }
+
+    // Today, when both devices read today: the verses are joined, so two
+    // phones reading different verses add up rather than the larger hiding the
+    // smaller. Verses credited without a verse list (Catch me up) are taken
+    // from whichever side holds more of them, never added twice.
+    if (theirs.today && mine.today && theirs.today.date === mine.today.date) {
+      var su = {}, n = 0;
+      (mine.today.seen || []).concat(theirs.today.seen || []).forEach(function (g) { if (!su[g]) { su[g] = 1; n++; } });
+      var xa = (mine.today.count || 0) - (mine.today.seen || []).length;
+      var xb = (theirs.today.count || 0) - (theirs.today.seen || []).length;
+      out.today.count = n + Math.max(0, xa, xb);
+      out.today.seen = Object.keys(su).map(function (x) { return +x; });
+    } else if (theirs.today && mine.today && theirs.today.date < mine.today.date) {
+      // The other device's last day of reading, written into the day log it
+      // would have reached at its own next rollover.
+      var d0 = theirs.today.date;
+      out.dayLog[d0] = Math.max(out.dayLog[d0] || 0, theirs.today.count || 0);
+    } else if (theirs.today && mine.today && theirs.today.date > mine.today.date) {
+      var d1 = mine.today.date;
+      out.dayLog[d1] = Math.max(out.dayLog[d1] || 0, mine.today.count || 0);
+    }
+
+    // Kept NLT words belong to a mark; with both marks gone, the words go too.
+    var marked = {};
+    out.favorites.forEach(function (r) { marked[r[0] + '.' + r[1] + '.' + r[2]] = 1; });
+    out.gems.forEach(function (r) { marked[r[0] + '.' + r[1] + '.' + r[2]] = 1; });
+    if (out.nlt && out.nlt.kept) {
+      for (key in out.nlt.kept) if (!marked[key]) delete out.nlt.kept[key];
+    }
+    return out;
+  }
+
   // ---------- Exports ----------
   var Engine = {
     COUNTS: COUNTS, BOOKS: BOOKS, TOTAL_VERSES: TOTAL_VERSES, OT_END: OT_END,
@@ -2650,7 +3188,16 @@
     // v1.1.4 (NLT), Decision 199
     NLT_CAP: NLT_CAP, nltKeptCount: nltKeptCount, nltWords: nltWords,
     nltCanKeep: nltCanKeep, nltKeep: nltKeep, nltDrop: nltDrop, nltTrim: nltTrim,
-    loadState: loadState, saveState: saveState, KEY: KEY
+    loadState: loadState, saveState: saveState, KEY: KEY,
+    // v1.1.5 — the room locked on the device (234–237) and sync (238–242)
+    SPARE_WORDS: SPARE_WORDS, spareTidy: spareTidy, spareLooksLike: spareLooksLike,
+    wordForLock: wordForLock, vaultCreate: vaultCreate, vaultOpen: vaultOpen,
+    vaultRewrap: vaultRewrap, vaultSeal: vaultSeal, vaultUnseal: vaultUnseal,
+    roomContents: roomContents, roomLocks: roomLocks, roomIsLocked: roomIsLocked,
+    roomBlob: roomBlob, roomBlobRead: roomBlobRead, roomFromBlob: roomFromBlob,
+    roomMergeContents: roomMergeContents, storable: storable,
+    lwwSnap: lwwSnap, lwwTrack: lwwTrack, syncMerge: syncMerge, planKey: planKey,
+    toPacked: toPacked, fromPacked: fromPacked
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = Engine;

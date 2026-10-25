@@ -19,14 +19,24 @@
    drawnigh-v6 → Web 1.1.4 (NLT) — the version is now named in every request
                  to Tyndale. Without it their server answered this key with the
                  SPANISH Bible, and the verses arrived in Spanish.
+   drawnigh-v8 → Web 1.1.6 — the fixes after the 1.1.5 hand test (Decisions
+                 253–263): a room brought from sync, the filing box, and
+                 squares that carry a locked room correctly.
+   drawnigh-v7 → Web 1.1.5 — the Secret Place locked on the phone, the spare
+                 key, sync with the reader's own Google Drive (hidden until
+                 Google approves), and the add-on's carries. sync.js joins the
+                 list. Google's addresses are not this site's own, so the fetch
+                 handler below passes them straight through and never caches
+                 them — a sign-in or a Drive copy is never kept here.
 */
-var CACHE = 'drawnigh-v6';
+var CACHE = 'drawnigh-v8';
 var FILES = [
   '.',
   'index.html',
   'app.css',
   'app.js',
   'engine.js',
+  'sync.js',
   'qrcode.js',
   'jsqr.js',
   'bible.json',

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="is-web">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -379,9 +379,39 @@
         </div>
       </div>
 
+      <!-- v1.1.5, Decisions 230–245 and 249 — sync with the reader's own Google
+           Drive. Hidden from every reader until Google's approval arrives
+           (Decision 245); app.js decides whether this block is shown. -->
+      <div class="setting" id="syncSetting" style="display:none">
+        <div class="row"><b>☁️ Sync with your own Google Drive</b></div>
+        <p>Keep your reading safe, and carry it between this browser and your other devices — your streak, plans, Gems and bookmarks take up wherever you stopped. <b>Nothing leaves your device unless you turn on sync. Then it goes only to your own Google Drive — never to us. We never see it.</b></p>
+        <p class="note">DrawNigh asks Google for one thing only: a hidden folder of its own inside your Drive. It cannot see, open or change any other file there, and it asks for no email, contacts or photos.</p>
+        <div id="syncOff">
+          <div class="plan-actions"><button class="small-btn gold" id="btnSyncOn">Turn on sync</button></div>
+        </div>
+        <div id="syncOnBox" style="display:none">
+          <!-- v1.1.6, Decision 259 — the account name waits behind View. -->
+          <div class="row"><span id="syncWho">Sync is on</span>
+            <button class="small-btn" id="syncView" style="display:none">View</button></div>
+          <div class="note" id="syncAcct" style="display:none"></div>
+          <div class="note" id="syncLast"></div>
+          <div class="plan-actions">
+            <button class="small-btn gold" id="btnSyncNow">Sync now</button>
+            <button class="small-btn" id="btnSyncOff">Turn off sync</button>
+          </div>
+          <!-- Decision 238 — the room only if he turns it on, and only locked. -->
+          <div class="row" id="syncRoomRow" style="margin-top:10px;display:none"><span>Also keep The Secret Place in sync</span>
+            <label class="toggle"><input type="checkbox" id="setSyncRoom"></label></div>
+          <p class="note" id="syncRoomNote" style="display:none">Your letters travel locked with your word. Google holds only the locked copy and cannot read it, and neither can we.</p>
+        </div>
+        <div class="note" id="syncNote"></div>
+      </div>
+
       <div class="setting">
         <div class="row"><b>Backup &amp; Restore</b></div>
-        <p>Your progress lives only on this device. Copy a backup code before switching browsers or phones. Codes from the original Mini BitBible app work here too.</p>
+        <p>Your progress lives on this device. Copy a backup code before switching browsers or phones. Codes from the original Mini BitBible app work here too.</p>
+        <!-- v1.1.5 — one of Decision 241's three places sync is mentioned. -->
+        <p class="note" id="syncInvite" style="display:none">Or let your reading follow you on its own, with sync. <a href="#" id="syncInviteGo" style="color:var(--gold-bright)">Sync →</a></p>
         <!-- v1.0.9 (Decision 86): two doors here, and they serve two different
              states. COPY is for a transfer you are making now. SAVE THE FILE is
              for loss — one phone, no second device anywhere, dead or stolen or
@@ -429,7 +459,7 @@
         <!-- v1.1.4 (NLT): reworded. With the NLT switched on the app does
                reach out — for a chapter, and for nothing else. The old sentence
                would have become untrue the moment the NLT shipped. -->
-        <div class="note">(opens Google Forms — this leaves DrawNigh. The app itself sends nothing about you anywhere. With the New Living Translation switched on it asks Tyndale for the chapter you are reading, and nothing else.)</div>
+        <div class="note">(opens Google Forms — this leaves DrawNigh. The app itself sends nothing about you anywhere. With the New Living Translation switched on it asks Tyndale for the chapter you are reading, and nothing else. With sync turned on, your reading goes only to your own Google Drive — never to us.)</div>
       </div>
 
       <!-- v1.1.0 (v18). The voice already in the phone — nothing downloaded,
@@ -483,12 +513,33 @@
              the door verse and the knock are ordinary readable text in this
              device's own storage, and only the travelling backup code is
              sealed. The app must never claim more than it does. -->
-        <p>A room inside DrawNigh, behind a verse you choose, a knock you choose and a word you choose. <b>The three locks guard this screen; the device itself is what guards the writing.</b> Anyone who can already read this phone's files can read what is in the room — what travels in your backup code is sealed, and that is the copy that gets pasted, photographed and emailed. <i>“But thou, when thou prayest, enter into thy closet, and when thou hast shut thy door, pray to thy Father which is in secret.”</i> — Matthew 6:6</p>
+        <!-- v1.1.5, Decision 234 — the letters are now locked on the device as
+             well. Decision 162's honest sentence ("the device itself is what
+             guards the writing") was true of v1.1.4 and is replaced, not kept,
+             because it is no longer the truth. -->
+        <p>A room inside DrawNigh, behind a verse you choose, a knock you choose and a word you choose. <b>What you write there is locked with your word</b> — on this device, in your backup code, and in sync if you choose it. Without your word or your spare key nobody can read it: not someone holding this phone, not Google, not us. <i>“But thou, when thou prayest, enter into thy closet, and when thou hast shut thy door, pray to thy Father which is in secret.”</i> — Matthew 6:6</p>
+        <!-- v1.1.6, Decision 255 — a room waiting in sync is offered first,
+             and while it waits Make a room is not offered at all. -->
+        <div class="note" id="roomStatus"></div>
         <div class="plan-actions" id="roomMakeRow">
+          <button class="small-btn gold" id="btnRoomBring" style="display:none">Bring my room</button>
           <button class="small-btn gold" id="btnRoomMake">Make a room</button>
           <button class="small-btn" id="btnRoomOpenSealed" style="display:none">Open the room in this code</button>
+          <!-- Decisions 261, 262 — a forgotten knock, and a room nobody can open. -->
+          <button class="small-btn" id="btnRoomForgot" style="display:none">Forgot the knock?</button>
+          <button class="small-btn" id="btnRoomDown" style="display:none">Take down this room</button>
+          <button class="small-btn gold" id="btnRoomKeepIt" style="display:none">Keep my room</button>
         </div>
-        <div class="note" id="roomStatus"></div>
+        <!-- Decision 256 -->
+        <p class="note" id="roomBringLine" style="display:none"><a href="#" id="roomBringGo" style="color:var(--gold-bright)">Have a room on another device? Bring it here.</a></p>
+        <!-- Decision 263 — nothing moves until the reader chooses. -->
+        <div id="roomClashBox" style="display:none;margin-top:10px">
+          <p><b>Your sync holds another room.</b> Neither room has been changed.</p>
+          <div class="plan-actions">
+            <button class="small-btn gold" id="btnClashJoin">Bring them together</button>
+            <button class="small-btn" id="btnClashApart">Keep them apart</button>
+          </div>
+        </div>
       </div>
 
       <!-- v1.0.9, item 10 (v15.2 §3.4). The ladder's rungs run from five days
@@ -528,7 +579,7 @@
         <!-- v1.0.8: the same courtesy the suggestion box gets (v14.1 §3) — someone who
              chose an extension that collects nothing is told before the tap that the
              tap leaves it. Hidden entirely while LINKS.donate is empty. -->
-        <div class="note" id="donateNote" style="display:none">(opens Paystack — this leaves DrawNigh. The app itself sends nothing about you anywhere. With the New Living Translation switched on it asks Tyndale for the chapter you are reading, and nothing else.)</div>
+        <div class="note" id="donateNote" style="display:none">(opens a giving page — this leaves DrawNigh. The app itself sends nothing about you anywhere. With the New Living Translation switched on it asks Tyndale for the chapter you are reading, and nothing else. With sync turned on, your reading goes only to your own Google Drive — never to us.)</div>
         <p style="margin-top:6px" id="aboutVerse">“Draw nigh to God, and he will draw nigh to you.” — James 4:8</p>
       </div>
     </section>
@@ -643,6 +694,8 @@
       <div class="note" id="squareModeNote"></div>
     </div>
     <div class="note" id="squareNote"></div>
+    <!-- v1.1.5, Decision 226 -->
+    <div class="note">If the other phone cannot read the square, copy the text code instead — or read the square with Google Lens and paste what it finds.</div>
   </div>
 </div>
 
@@ -654,6 +707,8 @@
     </div>
     <div class="square-wrap"><video id="scanVideo" playsinline muted></video></div>
     <div class="note" id="scanNote"></div>
+    <!-- v1.1.5, Decision 225 — a picture of the square, read the same way. -->
+    <div class="plan-actions"><button class="small-btn" id="scanFile">Load a picture</button></div>
   </div>
 </div>
 
@@ -682,20 +737,14 @@
          not one choice among four. Struggle and Testimony are things a letter
          can carry, so they sit here, unclaimed, for as long as he is writing —
          nothing is asked of him before he starts. -->
+    <!-- v1.1.6, Decision 253 — write first, file after, always. The writing
+         screen holds the title, the writing and Keep this; filing is asked
+         every time, in the filing box, after Keep this. -->
     <div id="roomWrite">
-      <div class="file-marks file-marks-top">
-        <label><input type="checkbox" id="mkStruggle"> Struggle — something being carried</label>
-        <label><input type="checkbox" id="mkTestimony"> Testimony — what God did</label>
-      </div>
+      <!-- v1.1.5, Decision 223 — a title at the top of the blank letter: typed
+           first, or filled in later, or never. No extra step either way. -->
+      <input type="text" id="roomTitle" class="room-title" maxlength="140" autocomplete="off" placeholder="A title, if you like">
       <textarea id="roomBox" placeholder="Say it. Nothing here is counted, scored or seen."></textarea>
-      <!-- v1.1.3, Decision 140 — type-ahead only helps a man who remembers how
-           the name starts. The button beside it shows him the whole list. -->
-      <div class="row" style="margin-top:8px"><span>Put it under (optional)</span>
-        <span class="cat-field">
-          <input type="text" id="mkCat" list="catList" placeholder="a name you choose">
-          <button type="button" class="small-btn" id="mkCatBrowse" title="See all your categories">All</button>
-        </span></div>
-      <div class="cat-picker" id="mkCatPicker" style="display:none"></div>
       <div class="plan-actions">
         <button class="small-btn gold" id="roomKeep">Keep this</button>
         <button class="small-btn" id="roomToList">Just reading today</button>
@@ -734,6 +783,17 @@
         <p>It must be something only <i>you</i> can read as a reminder. <b>If it needs to be strange to work, it is the wrong words.</b> A verse reference on the main screen of a Bible app is furniture — but chosen because of what it says, it means one thing to you and nothing to anyone else.</p>
         <input type="text" id="remText" placeholder="Psalm 27:5 — or a few words of your own">
         <div class="plan-actions"><button class="small-btn gold" id="remSave">Keep it</button></div>
+      </div>
+
+      <!-- v1.1.5, Decision 236 — capitals in the word. -->
+      <div class="setting">
+        <div class="row"><b>Capitals in your word</b>
+          <select id="roomWordCase">
+            <option value="any">Do not count (Faith = faith)</option>
+            <option value="exact">Count them</option>
+          </select></div>
+        <div class="note">Spaces at the start or end never count. Changing this asks for your word once more, because the lock is rebuilt around it.</div>
+        <div class="note" id="roomCaseNote"></div>
       </div>
 
       <div class="setting">
@@ -802,20 +862,18 @@
      button is pressed later. Dismissible for good, once he no longer needs it. -->
 <div class="overlay" id="fileOverlay">
   <div class="card">
-    <h3 id="foTitle">Filed as a letter.</h3>
-    <div class="note" id="foNote"></div>
+    <h3 id="foTitle">Where do you want to file it?</h3>
+    <div class="note" id="foNote">If you choose nothing, it is kept as a letter to God.</div>
     <div class="file-marks">
-      <label><input type="checkbox" id="foStruggle"> Struggle — something being carried</label>
-      <label><input type="checkbox" id="foTestimony"> Testimony — what God did</label>
+      <label><input type="checkbox" id="foStruggle"> Struggle</label>
+      <label><input type="checkbox" id="foTestimony"> Thanksgiving / Testimony</label>
     </div>
-    <div class="row" style="margin-top:8px"><span>Put it under</span>
+    <div class="row" style="margin-top:8px"><span>Custom:</span>
       <span class="cat-field">
         <input type="text" id="foCat" list="catList" placeholder="a name you choose">
         <button type="button" class="small-btn" id="foCatBrowse" title="See all your categories">All</button>
       </span></div>
     <div class="cat-picker" id="foCatPicker" style="display:none"></div>
-    <div class="row" id="foDontAskRow" style="margin-top:8px"><span>Don't ask me this again</span>
-      <label class="toggle"><input type="checkbox" id="foDontAsk"></label></div>
     <!-- v1.1.4, Decision 146 — F31. This screen used to carry Done and nothing
          else, and the letter was already written by the time it opened: "after
          writing and i click keep this, but later decide not to save it, there is
@@ -900,7 +958,8 @@
            days to that gap, with the answer in his own drawer. The warning is
            split at the place it belongs: while a man is choosing what to write
            down, not after he is already locked out. -->
-      <p class="screen-note"><b>The word is the one nobody can ever recover.</b> Not the app, not anyone. No reset link, no recovery code, no back door — the same thing that means no server and no surveillance means no rescue. <b>Forget the word and the room is closed for good.</b></p>
+      <!-- v1.1.5, Decision 235 — the spare key. -->
+      <p class="screen-note"><b>Nobody can recover your word for you.</b> Not the app, not anyone — no reset link and no back door. What there is instead is a <b>spare key</b>: eight plain words, shown to you once when the room is made. Type them in place of the word and the room opens, and you set a new word. <b>Lose the word and the spare key together, and the room is closed for good.</b></p>
       <!-- WEB ONLY, settled 13 Sep 2026. The add-on keeps the room in storage
            that belongs to the add-on. A website keeps it in ordinary browser
            storage, which a phone clears far more casually — and the room has no
@@ -964,7 +1023,7 @@
          without ever seeing the switch. A reader will not go looking for a
          setting he was never shown. -->
     <div id="makeStep5" style="display:none">
-      <p class="screen-note"><b>One last offer, and you can skip it.</b> There is no recovery here — a combination unused for months is a combination lost, and there is nobody to ask. So the room can put a quiet reminder in front of you <b>every three days</b>.</p>
+      <p class="screen-note"><b>One last offer, and you can skip it.</b> There is nobody to ask here — a combination unused for months is a combination lost, and the spare key is the only way back. So the room can put a quiet reminder in front of you <b>every three days</b>.</p>
       <p class="screen-note">It must be something only <i>you</i> can read as a reminder. <b>If it needs to be strange to work, it is the wrong words.</b> A verse reference on the main screen of a Bible app is furniture — chosen because of what it says, it means one thing to you and nothing to anyone else.</p>
       <input type="text" id="mkRemText" autocomplete="off" placeholder="Psalm 27:5 — or a few words of your own">
       <div class="note">This can be turned on, changed or turned off at any time, inside the room's own Settings.</div>
@@ -1031,11 +1090,96 @@
 <div class="overlay" id="restoredOverlay">
   <div class="card">
     <h3>That was a one-off</h3>
-    <p class="screen-note">From here you come in by <b>your verse, your knock and your word</b> — the ones that were inside this code. The door is mended and this device knows where it is again.</p>
-    <p class="screen-note"><b>If you do not know all three, set a new door now.</b> Otherwise this code stays your only way in, and if you lose it you lose the room.</p>
+    <p class="screen-note">From here you come in by <b>your verse, your knock and your word</b> — the ones that were <span id="restoredFrom">inside this code</span>. <span id="restoredMend">The door is mended and this device knows where it is again.</span></p>
+    <p class="screen-note"><b>If you do not know all three, set a new door now.</b> Otherwise <span id="restoredOnly">this code stays your only way in, and if you lose it you lose the room</span>.</p>
     <div class="actions">
       <button class="nav-btn next" id="restoredSet">Set a new door now</button>
       <button class="nav-btn" id="restoredKeep">I know them — keep them</button>
+    </div>
+  </div>
+</div>
+
+<!-- v1.1.5, Decisions 235 and 237 — the spare key, shown once. -->
+<div class="overlay" id="spareOverlay">
+  <div class="card">
+    <h3>Your spare key</h3>
+    <p class="screen-note" id="spareLead"></p>
+    <div class="spare-words" id="spareWords"></div>
+    <p class="screen-note">If you ever forget your word, type these eight words into the word box at your door instead, and set a new word. <b>They are shown once, now, and never again.</b> DrawNigh keeps no copy — not on this device, not in your backup code, not in sync. Lose your word and these together, and the letters are gone for good.</p>
+    <!-- Decision 237's line, said as it is: codes made before today are
+         locked with the word as it was then, not left open. -->
+    <p class="screen-note" id="spareOld" style="display:none">Backup codes you made before today carry your letters as they were then, locked with the word you had then. Anyone who learns that word can open those codes, even after you change it. If you no longer need them, delete them.</p>
+    <label class="edit-tick"><input type="checkbox" id="spareWrote"><span>I have written these eight words down somewhere only I can reach.</span></label>
+    <div class="actions"><button class="nav-btn next" id="spareDone" disabled>Go on</button></div>
+  </div>
+</div>
+
+<!-- v1.1.5, Decision 249 — the offer on first open. -->
+<div class="overlay" id="syncAskOverlay">
+  <div class="card">
+    <h3>Keep your progress safe?</h3>
+    <p class="screen-note">DrawNigh can keep a copy of your reading in your own Google Drive, so a lost phone, a cleared browser or a new address never costs you your streak, your plans or your Gems — and your reading follows you to your other devices.</p>
+    <p class="screen-note">It goes only to your own Drive, into a hidden folder only DrawNigh can see. Never to us. Google will ask you to sign in and allow it.</p>
+    <div class="actions">
+      <button class="nav-btn next" id="syncAskYes">Yes, back it up</button>
+      <button class="nav-btn" id="syncAskNo">Not now</button>
+    </div>
+  </div>
+</div>
+
+<!-- v1.1.5, Decision 242 — turning sync off. -->
+<!-- v1.1.6, Decision 258 — a plain line before Firefox's own box. The
+     button below is what raises Firefox's box, because Firefox only asks
+     from inside a tap. -->
+<div class="overlay" id="dcOverlay">
+  <div class="card">
+    <h3>Before Firefox asks</h3>
+    <p class="screen-note" id="dcText"></p>
+    <div class="actions">
+      <button class="nav-btn next" id="dcGo">Go on</button>
+      <button class="nav-btn" id="dcNo">Not now</button>
+    </div>
+  </div>
+</div>
+
+<!-- v1.1.6, Decision 256 — bringing a room from another device. -->
+<div class="overlay" id="bringOverlay">
+  <div class="card">
+    <h3>Bring your room here</h3>
+    <p class="screen-note" id="bringText"></p>
+    <div class="actions" style="flex-wrap:wrap">
+      <button class="nav-btn next" id="bringSync">Turn on sync</button>
+      <button class="nav-btn next" id="bringSyncNow" style="display:none">Sync now</button>
+      <button class="nav-btn" id="bringCode">Use a backup code</button>
+      <button class="nav-btn" id="bringNo">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- v1.1.6, Decision 263 — two rooms made one: which lock it keeps. -->
+<div class="overlay" id="joinOverlay">
+  <div class="card">
+    <h3>Which lock will the joined room keep?</h3>
+    <p class="screen-note">Both rooms are open. All letters from both will be kept in one room.</p>
+    <p class="screen-note">The room keeps one lock: that room's verse, knock, word and spare key, together. The other room's word and spare key will no longer open it. No new spare key is made. You can still change the word later in the room's Settings.</p>
+    <div class="note" id="joinNote"></div>
+    <div class="actions" style="flex-wrap:wrap">
+      <button class="nav-btn next" id="joinMine">Keep the lock of this device's room</button>
+      <button class="nav-btn next" id="joinTheirs">Keep the lock of the synced room</button>
+      <button class="nav-btn" id="joinNo">Cancel — nothing has changed</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="syncOffOverlay">
+  <div class="card">
+    <h3>Sync is now off.</h3>
+    <p class="screen-note">Your reading stays on this device. A copy remains in your Google Drive, in a hidden folder only DrawNigh can see.</p>
+    <p class="screen-note">You can remove it now, or leave it. If you leave it, you can delete it any time from Google Drive → Settings → Manage apps → DrawNigh.</p>
+    <div class="note" id="syncOffNote"></div>
+    <div class="actions">
+      <button class="nav-btn" id="syncOffRemove">Remove my copy</button>
+      <button class="nav-btn next" id="syncOffLeave">Leave it</button>
     </div>
   </div>
 </div>
@@ -1190,6 +1334,7 @@
 <script src="qrcode.js"></script>
 <script src="jsqr.js"></script>
 <script src="engine.js"></script>
+<script src="sync.js"></script>
 <script src="app.js"></script>
 <!-- WEB BUILD — the service worker is what lets the app open with no signal.
      Registered after the app itself, and its failure is never allowed to stop

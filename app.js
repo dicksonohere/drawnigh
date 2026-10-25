@@ -3,6 +3,13 @@
   'use strict';
   var E = self.DrawNighEngine;
   var $ = function (id) { return document.getElementById(id); };
+  /* v1.1.5 — ONE app.js for both builds. The add-on and the website were two
+     copies that had drifted (the website carried the NLT, the long press and
+     Quick access; the add-on did not). Sync needs the two to be one program,
+     so they are: the page tells which it is running in, and the few things
+     that genuinely differ ask this flag. */
+  var IS_EXT = (typeof location !== 'undefined') && /^(moz|chrome)-extension:$/.test(location.protocol);
+  var XAPI = IS_EXT ? ((typeof browser !== 'undefined' && browser.runtime) ? browser : (typeof chrome !== 'undefined' ? chrome : null)) : null;
 
   var BIBLE = null;       // full text, loaded once
   var state = null;
@@ -48,8 +55,16 @@
      Both are the same thing: nothing redrew the sheet after the state moved.
      save() is the one place every change passes through, so the redraw lives
      here. It costs nothing when the sheet is shut. */
+  /* v1.1.5 — save() also notes, thing by thing, what changed (so two synced
+     copies can tell a removal from something the other side never had), seals
+     the room's letters if the room is open, and tells sync there is something
+     new to carry. */
+  var lwSnap = null;
   function save() {
+    try { lwSnap = E.lwwTrack(lwSnap, state); } catch (e) {}
     E.saveState(state);
+    if (roomKey) roomPersist();
+    syncNote('state');
     if ($('badgeSheet').classList.contains('show')) {
       renderBadgeSheet();
       if (bShown != null) showBookCard(bShown);
@@ -97,9 +112,15 @@
       el.innerHTML = cap ? '<span class="cap">' + esc(first) + '</span>' + esc(rest) : esc(t);
     }
   }
+  // v1.1.5 — built as nodes, not markup, as every new control has been since
+  // v1.1.0, so the add-on's linter list does not grow (v15.2 §6's practice).
   function plainInto(el, t, cap) {
-    if (cap) el.innerHTML = '<span class="cap">' + esc(t.charAt(0)) + '</span>' + esc(t.slice(1));
-    else el.textContent = t;
+    if (!cap) { el.textContent = t; return; }
+    while (el.firstChild) el.removeChild(el.firstChild);
+    var c = document.createElement('span');
+    c.className = 'cap'; c.textContent = t.charAt(0);
+    el.appendChild(c);
+    el.appendChild(document.createTextNode(t.slice(1)));
   }
 
   /* The reference line. The translation named on it is ALWAYS the translation
@@ -225,10 +246,18 @@
     if (st === 'out')     say = 'Today\u2019s NLT readings are used up. The King James Version is here.';
     if (st === 'missing') say = 'This verse is not in the New Living Translation. This is the King James Version.';
     if (st === 'random')  say = 'Random verses stay in the King James Version.';
+    if (st === 'perm')    say = 'The NLT comes from Tyndale over the internet, and Firefox needs your permission for that. This is the King James Version.';
     if (nltSaid) say = say ? (say + ' ' + nltSaid) : nltSaid;
     if (!say) { el.style.display = 'none'; return; }
     el.style.display = '';
     el.appendChild(document.createTextNode(say));
+    if (st === 'perm') {
+      var allow = document.createElement('button');
+      allow.className = 'small-btn gold'; allow.style.marginTop = '8px'; allow.style.display = 'block';
+      allow.textContent = 'Allow the NLT';
+      allow.onclick = function (ev) { ev.stopPropagation(); nltAskPermission(); };
+      el.appendChild(allow);
+    }
     // Decision 203 — the reader can tell him; nothing tells him on its own.
     if (st === 'out' && LINKS.suggest) {
       var a = document.createElement('a');
@@ -329,6 +358,82 @@
     21:'Song of Solomon', 45:'1Cor', 46:'2Cor', 51:'1Thes', 52:'2Thes', 53:'1Tim', 54:'2Tim',
     59:'1Pet', 60:'2Pet', 61:'1Jn', 62:'2Jn', 63:'3Jn' };
 
+  /* v1.1.5, Decisions 214 and 218 — THE ADD-ON ASKS FIRST.
+     The website needs nothing: a page can read Tyndale's API as it stands. The
+     add-on declares api.nlt.to and nothing else, and Firefox does NOT grant a
+     permission that arrives in an update — checked at BUILD, as 214 required
+     (MDN: "if an extension update requests new host permissions, these are not
+     shown to the user"). So nobody is held on the old version: the add-on asks
+     the first time the reader chooses the NLT, and until he says yes the KJV
+     is here with a line that says why. The same ask carries Firefox's own
+     data-consent question (technical and interaction data — the chapter asked
+     for), where the browser has it; older Firefox has the reader's own tap
+     after the explanation in Settings, which is the consent. */
+  var NLT_ORIGIN = 'https://api.nlt.to/*';
+  var nltAllowed = !IS_EXT;
+  var syncAllowed = !IS_EXT;    // v1.1.6 — Firefox has already allowed Drive
+  var dcSupported = false;
+  function extPermFor(origins) {
+    var p = { origins: origins };
+    if (dcSupported) p.data_collection = ['technicalAndInteraction'];
+    return p;
+  }
+  // Resolves true (allowed), false (the reader said no), or null (this
+  // Firefox could not even ask — an older version without the permission).
+  function extAsk(origins) {
+    if (!IS_EXT || !XAPI || !XAPI.permissions) return Promise.resolve(true);
+    try {
+      var r = XAPI.permissions.request(extPermFor(origins));
+      return (r && r.then) ? r.then(function (ok) { return !!ok; }, function () { return null; }) : Promise.resolve(!!r);
+    } catch (e) { return Promise.resolve(null); }
+  }
+  function extHas(origins) {
+    if (!IS_EXT || !XAPI || !XAPI.permissions) return Promise.resolve(true);
+    try {
+      return XAPI.permissions.contains(extPermFor(origins)).then(function (ok) { return !!ok; }, function () { return false; });
+    } catch (e) { return Promise.resolve(false); }
+  }
+  function extPermsInit() {
+    if (!IS_EXT || !XAPI || !XAPI.permissions) return Promise.resolve();
+    return XAPI.permissions.getAll().then(function (all) {
+      dcSupported = !!(all && Array.isArray(all.data_collection));
+      return Promise.all([extHas([NLT_ORIGIN]), extHas(['https://www.googleapis.com/*'])]);
+    }).then(function (ok) { nltAllowed = ok[0]; syncAllowed = ok[1]; }, function () {});
+  }
+  /* v1.1.6, Decision 258 — before Firefox raises its own box ("technical and
+     interaction data"), DrawNigh says in a plain line what really happens.
+     Firefox only asks from inside a tap, so the line carries the button that
+     raises Firefox's box: one more tap, and the reader has read why first. */
+  var DC_OPEN = 'Firefox will now ask you to allow this. It uses a standard phrase. What really happens: ';
+  var dcThen = null;
+  function dcExplain(kind, then) {
+    dcThen = then;
+    $('dcText').textContent = DC_OPEN + (kind === 'sync'
+      ? 'your copy goes to your own Google Drive, never to us.'
+      : 'the verses come from Tyndale, the NLT\u2019s publisher. DrawNigh collects nothing about you.');
+    $('dcOverlay').classList.add('show');
+  }
+  // Called from inside a tap, so Firefox will show its question.
+  function nltAskPermission(fromLine) {
+    if (nltAllowed) return Promise.resolve(true);
+    if (IS_EXT && !fromLine) {
+      return new Promise(function (res) {
+        dcExplain('nlt', function (go) {
+          if (!go) { repaintVerse(); res(false); return; }
+          nltAskPermission(true).then(res);
+        });
+      });
+    }
+    return extAsk([NLT_ORIGIN]).then(function (ok) {
+      /* null: this Firefox could not show its own question at all. The
+         reader's tap, after the plain explanation in Settings, is then the
+         consent — the request made is exactly the same either way. */
+      nltAllowed = (ok !== false);
+      if (ok) nltTryAgain(); else repaintVerse();
+      return ok;
+    });
+  }
+
   var nltHave = {};     // 'b.c' -> { verseIndex: text }   held in memory only
   var nltOrder = [];    // which chapters are held, oldest first
   var nltAsking = {};   // 'b.c' -> promise, so one chapter is never asked for twice
@@ -370,6 +475,7 @@
     if (!nltChosen() && !cmpOn) return 'kjv';
     if (nltBarred()) return 'random';
     if (nltOutToday()) return 'out';
+    if (!nltAllowed) return 'perm';                 // v1.1.5 — the add-on has not been allowed yet
     var at = nltAt(ref[0], ref[1]);
     var ch = nltHave[at];
     if (!ch) return nltBad[at] ? (nltWrong[at] ? 'wrong' : 'off') : 'loading';
@@ -385,6 +491,7 @@
   function nltGet(b, c) {
     var at = nltAt(b, c);
     if (nltHave[at]) return Promise.resolve({ ok: true });
+    if (!nltAllowed) return Promise.resolve({ ok: false, why: 'perm' });
     if (nltAsking[at]) return nltAsking[at];
     if (nltOutToday()) return Promise.resolve({ ok: false, why: 'out' });
     var run = nltAskOnce(b, c, false).then(function (r) {
@@ -392,6 +499,7 @@
       if (r.ok) {
         delete nltBad[at];
         nltHave[at] = r.verses;
+        nltRefill(b, c, r.verses);
         nltOrder.push(at);
         while (nltOrder.length > NLT_HOLD) {
           var old = nltOrder.shift();
@@ -411,6 +519,20 @@
     return run;
   }
 
+  /* v1.1.5, Decision 227 — a mark that came across in a square carries no
+     words. They come back the first time its chapter arrives from Tyndale;
+     until then the King James is shown, unlabelled as anything else. */
+  function nltRefill(b, c, verses) {
+    var kept = state && state.nlt && state.nlt.kept, changed = false;
+    if (!kept) return;
+    for (var key in kept) {
+      var p = key.split('.');
+      if (+p[0] !== b || +p[1] !== c || (kept[key] && kept[key].t)) continue;
+      var t = verses[+p[2]];
+      if (t) { kept[key] = { t: String(t), v: 'NLT' }; changed = true; }
+    }
+    if (changed) save();
+  }
   function nltAskOnce(b, c, second) {
     var url = NLT_URL + '?ref=' + encodeURIComponent(nltRefStr(b, c)) +
               '&version=' + NLT_VERS + '&key=' + NLT_KEY;
@@ -1766,6 +1888,8 @@
 
   // ---------- Settings ----------
   function renderSettings() {
+    paintSync();                                   // v1.1.5
+    roomStatusLine();                              // v1.1.6 — a take-down falls due, a room waits
     $('setSiteEnabled').checked = state.settings.siteEnabled;
     $('setShowNotes').checked = !!state.settings.showNotes;   // v13
     $('setSiteMins').value = state.settings.siteMins;
@@ -1808,14 +1932,22 @@
   // v1.0.8 switches on giving. Note the domain is paystack.SHOP, not .com —
   // that is what Paystack issued for this page; do not "correct" it.
   var LINKS = {
-    donate:  'https://paystack.shop/pay/drawnigh',   // v1.0.8 — live. Trading name DRAWNIGH.
+    /* v1.1.5 — EMPTY ON PURPOSE. The personal "Support DrawNigh" Paystack page
+       was deleted on 12 October 2026: gifts are to go to the Outreach, never to
+       him, and giving is paused until the Outreach has its own Paystack. A link
+       to a page that no longer exists must not stand in About. Empty hides the
+       link and its note together; the Outreach's page goes here when it exists. */
+    donate:  '',
     suggest: 'https://forms.gle/pLpcUCw14qr3KBVj9',  // v1.0.2 — live.
-    email:   ''
+    email:   '',
+    // v1.1.5 — the privacy page Google's sign-in points to, on the Outreach's domain.
+    privacy: 'https://counselofgod.org/privacy.html'
   };
   function renderAboutLinks() {
     var bits = [];
     if (LINKS.donate) bits.push('<a href="' + LINKS.donate + '" target="_blank" rel="noopener noreferrer" style="color:var(--gold-bright)">🤲 Support DrawNigh</a>');
     if (LINKS.email) bits.push('<a href="mailto:' + LINKS.email + '" style="color:var(--gold-bright)">✉ Contact</a>');
+    if (LINKS.privacy) bits.push('<a href="' + LINKS.privacy + '" target="_blank" rel="noopener noreferrer" style="color:var(--gold-bright)">Privacy</a>');
     $('aboutLinks').innerHTML = bits.join(' · ');
     // v1.0.8: the "this leaves DrawNigh" note rides with the giving link and
     // disappears with it. No donate link, no note.
@@ -1881,7 +2013,7 @@
     /* WEB BUILD — Quick access follows the same rule as the ⋮ item, governed
        here rather than separately, so the two can never disagree about whether
        there is a plan to catch up on. */
-    var quick = $('setCatchUp');
+    var quick = $('setCatchUp');   // website only: the add-on page has no Quick access
     if (quick) quick.style.display = show ? '' : 'none';
   }
 
@@ -2009,18 +2141,58 @@
      utterances IS the pause: "Verse one." … "In the beginning God created…".
      Dickson's own correction — a bare number runs into the sentence behind it
      and is heard as part of it. */
-  function speakParts(parts, onDone) {
+  /* v1.1.5, Decision 224 — read-aloud waited 4–8 seconds on the Oppo before
+     a word came. The cause is NOT diagnosed, so three things are done and the
+     Oppo is the judge: (1) the voice is woken by the reader's first touch once
+     read-aloud is switched on, and again when it is switched on; (2) the next
+     verse is handed to the voice while this one is still being spoken, so the
+     voice never starts cold between verses; (3) any wait longer than a moment
+     is said out loud on the bar — "Getting the voice ready…" — never silence.
+     A `token` marks one verse's utterances, so a verse the reader has moved
+     away from is quietly dropped rather than read as the device failing. */
+  var voiceWarm = false;
+  function warmVoice() {
+    if (voiceWarm || !speechOK() || !aSet('audio', false)) return;
+    voiceWarm = true;
+    try {
+      speechSynthesis.getVoices();
+      var u = new SpeechSynthesisUtterance(' ');
+      u.volume = 0; u.rate = 2;
+      speechSynthesis.speak(u);
+    } catch (e) {}
+  }
+  var voiceWaitTimer = null;
+  function speakParts(parts, onDone, token) {
     var rate = parseFloat(aSet('audioRate', 1)) || 1;
     var vi = aSet('audioVoice', '');
     var last = parts.length - 1;
+    token = token || {};
     parts.forEach(function (text, i) {
       var u = new SpeechSynthesisUtterance(text);
       u.rate = rate;
       if (vi !== '' && audioVoices[vi]) u.voice = audioVoices[vi];
-      u.onerror = function () { stopAudio('The device stopped speaking.'); };
-      if (i === last) u.onend = onDone;
+      u.onerror = function (ev) {
+        if (token.dead) return;                        // a verse moved away from, not a failure
+        var code = ev && ev.error;
+        if (code === 'interrupted' || code === 'canceled') return;
+        stopAudio('The device stopped speaking.');
+      };
+      u.onstart = function () {
+        token.started = true;
+        if (voiceWaitTimer) { clearTimeout(voiceWaitTimer); voiceWaitTimer = null; }
+        if (barText === 'Getting the voice ready…') audioBar('Reading aloud…', false);
+      };
+      if (i === last) u.onend = function () { if (!token.dead) onDone(); };
       try { speechSynthesis.speak(u); } catch (e) { stopAudio(''); }
     });
+    return token;
+  }
+  function waitSaid(token) {
+    if (voiceWaitTimer) clearTimeout(voiceWaitTimer);
+    voiceWaitTimer = setTimeout(function () {
+      voiceWaitTimer = null;
+      if (audioOn && !token.started && !token.dead) audioBar('Getting the voice ready…', false);
+    }, 700);
   }
   function speakNow(ref) {
     if (!speechOK() || !ref) return;
@@ -2037,7 +2209,10 @@
       });
       return;
     }
-    try { speechSynthesis.cancel(); } catch (e) {}
+    // Only a voice that is actually speaking is stopped: on some phones a
+    // cancel on an idle voice makes the next verse start cold (Decision 224).
+    voiceDrop();
+    try { if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel(); } catch (e) {}
     var t = (nltTop() && nltState(ref) === 'nlt') ? nltTextFor(ref) : verseText(ref[0], ref[1], ref[2]);
     var parts = [];
     /* FINDING F5 — the chapter is named when the reading crosses into it.
@@ -2059,12 +2234,62 @@
     // screen and cannot be un-heard.
     parts.push(t);
     E.audioMark(state, ref);
-    speakParts(parts, function () { if (audioOn) afterSpoken(ref); });
+    var tok = speakParts(parts, function () { if (audioOn) afterSpoken(ref); });
+    voiceNow = tok;
+    waitSaid(tok);
+    queueAhead(ref);
+  }
+  /* The next verse, handed to the voice early. Only within the chapter when
+     the chapter stop is on (a stop must stop), only where the words are
+     already here, and never in Random — Random has no "next" to know. */
+  var voiceNow = null, voiceNext = null;
+  function voiceDrop() {
+    if (voiceNext) { voiceNext.tok.dead = true; voiceNext = null; }
+    if (voiceNow) { voiceNow.dead = true; voiceNow = null; }
+  }
+  function speechTextFor(ref) {
+    if (nltTop()) {
+      var st = nltState(ref);
+      if (st === 'nlt') return nltTextFor(ref);
+      if (st === 'loading') return null;
+    }
+    return verseText(ref[0], ref[1], ref[2]);
+  }
+  function queueAhead(ref) {
+    if (mode === 'random' || !audioOn) return;
+    var nx = null;
+    try { nx = stepFrom(ref, 1); } catch (e) { nx = null; }
+    if (!nx) return;
+    var crossing = (nx[0] !== ref[0] || nx[1] !== ref[1]);
+    if (crossing && aSet('audioStop', true)) return;
+    var t = speechTextFor(nx);
+    if (t == null) return;
+    var parts = [];
+    if (crossing) parts.push(E.BOOKS[nx[0]] + ', chapter ' + (nx[1] + 1) + '.');
+    if (aSet('audioNums', false)) parts.push('Verse ' + (nx[2] + 1) + '.');
+    parts.push(t);
+    var q = { ref: nx };
+    q.tok = speakParts(parts, function () {
+      if (audioOn && voiceNow === q.tok) afterSpoken(nx);
+    });
+    voiceNext = q;
   }
   function afterSpoken(spokenRef) {
     serveNext();                                  // counts it, exactly like reading
     var next = shownRef();
-    if (!next) { stopAudio('That is the end of it.'); return; }
+    if (!next) { voiceDrop(); try { speechSynthesis.cancel(); } catch (e) {} stopAudio('That is the end of it.'); return; }
+    // The next verse was already handed over and is the one now on screen:
+    // the voice carries straight on, and the verse after it is handed over.
+    if (voiceNext && voiceNext.ref[0] === next[0] && voiceNext.ref[1] === next[1] && voiceNext.ref[2] === next[2]) {
+      var q = voiceNext; voiceNext = null;
+      voiceNow = q.tok;
+      audioLastCh = [next[0], next[1]];
+      E.audioMark(state, next);
+      if (!q.tok.started) waitSaid(q.tok);
+      queueAhead(next);
+      return;
+    }
+    if (voiceNext) { voiceNext.tok.dead = true; voiceNext = null; try { speechSynthesis.cancel(); } catch (e) {} }
     // Decision 107 — it reads a chapter, then stops and waits. A man cooking
     // can tap. A phone on a table cannot. Decision 108 turns it off in Settings,
     // and Settings says plainly what that means.
@@ -2097,6 +2322,8 @@
     speakNow(shownRef());
   }
   function stopAudio(msg) {
+    voiceDrop();
+    if (voiceWaitTimer) { clearTimeout(voiceWaitTimer); voiceWaitTimer = null; }
     audioOn = false; audioWaiting = false; audioLastCh = null;
     // The hold is a sitting, not a setting. Stopping the reading ends it.
     audioHold = false; holdRefused = false;
@@ -2173,12 +2400,17 @@
     paintSquare();
   }
   function openSquare() {
+    /* v1.1.5, Decision 227 — 500 kept NLT verses made 65 squares to photograph.
+       The square now carries only the MARKS on NLT verses; the words come back
+       from Tyndale when the verse is next opened with a connection. The text
+       code and the saved file still carry the words, so nothing is lost by
+       anyone who uses those. */
     backupCode(function (code) {
       sqCode = code; sqMode = 'fewest';
       $('squareWrap').classList.remove('full');
       rebuildSquares();
       $('squareSheet').classList.add('show');
-    });
+    }, { marksOnly: true });
   }
 
   // ---------- Scanning one (Decisions 99 and 102) ----------
@@ -2227,9 +2459,70 @@
             : 'Those squares did not come back as a code.';
         }
       }, 300);
-    }, function () {
-      $('scanNote').textContent = 'This phone would not open the camera. The square still works — read it with the phone’s own camera app and paste the code below.';
+    }, function (err) {
+      /* v1.1.5, Decision 225 — said plainly, with the way round it beside it.
+         What the browser gave as its reason is shown too, small, because the
+         reason Firefox refuses here was not found at BUILD and only a real
+         phone can tell us. */
+      $('scanNote').textContent = cameraWhy(err) + ' A picture of the square works instead — tap “Load a picture”. Or read the square with the phone’s own camera or Google Lens, and paste the code into the box.';
+      $('scanFile').classList.add('gold');
     });
+  }
+  /* v1.1.6, Decision 260 — the browser's reason stays in brackets, so the
+     Oppo can still report it, with plain words before it. */
+  var CAMERA_WORDS = {
+    NotAllowedError: 'the camera was refused',
+    PermissionDeniedError: 'the camera was refused',
+    NotFoundError: 'no camera was found',
+    DevicesNotFoundError: 'no camera was found',
+    NotReadableError: 'the camera is already in use by another app',
+    TrackStartError: 'the camera is already in use by another app',
+    OverconstrainedError: 'this camera could not do what was asked of it',
+    SecurityError: 'this browser does not allow the camera here',
+    AbortError: 'the camera stopped before it started'
+  };
+  function cameraWhy(err) {
+    var name = (err && err.name) ? String(err.name) : '';
+    if (!name) return 'The camera didn’t open.';
+    var plain = CAMERA_WORDS[name] || 'something stopped it';
+    return 'The camera didn’t open: ' + plain + ' (' + name + ').';
+  }
+  // A photo of a square, read the same way the camera reads one.
+  function scanPicture() {
+    var inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'image/*';
+    inp.onchange = function () {
+      var f = inp.files && inp.files[0];
+      if (!f) return;
+      var url = URL.createObjectURL(f), img = new Image();
+      img.onload = function () {
+        var cv = document.createElement('canvas');
+        var scale = Math.min(1, 1600 / Math.max(img.width, img.height));
+        cv.width = Math.round(img.width * scale); cv.height = Math.round(img.height * scale);
+        var g = cv.getContext('2d');
+        g.drawImage(img, 0, 0, cv.width, cv.height);
+        URL.revokeObjectURL(url);
+        var data = g.getImageData(0, 0, cv.width, cv.height), found = null;
+        try { found = jsQR(data.data, data.width, data.height); } catch (e) {}
+        var part = found ? E.qrParse(found.data) : null;
+        if (!part) { $('scanNote').textContent = 'No DrawNigh square could be read in that picture. Try a closer, straighter photo.'; return; }
+        if (scanBag && scanBag.tag !== part.tag) { $('scanNote').textContent = 'That square belongs to a different code. Start again with one set.'; return; }
+        scanBag = E.qrCollect(scanBag, part);
+        scanTell();
+        $('scanNote').textContent = '';
+        if (!E.qrMissing(scanBag).length) {
+          var code = E.qrAssemble(scanBag);
+          closeScan();
+          $('backupBox').value = code || '';
+          $('backupNote').textContent = code ? 'Code read from the picture. Choose Merge or Replace.' : 'Those squares did not come back as a code.';
+        } else {
+          $('scanNote').textContent = 'Got it. Load the next picture.';
+        }
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); $('scanNote').textContent = 'That file could not be opened as a picture.'; };
+      img.src = url;
+    };
+    inp.click();
   }
   function closeScan() {
     if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
@@ -2366,6 +2659,167 @@
       }
     }, E.KNOCK_SETTLE * 1000);
   }
+  /* ================= v1.1.5 — THE ROOM LOCKED ON THIS DEVICE =================
+     Decisions 234–237 (the shape is explained in engine.js). Here: the letter
+     key is held in memory only while the room is open; every change inside is
+     sealed before it is written; and leaving the room forgets the key and the
+     letters both. Nothing readable is ever written to this device's storage —
+     engine.saveState() refuses to, for every part of the app at once. */
+  var roomKey = null;        // the letter key: memory only, and only while open
+  var roomSnap = null;       // each letter as last sealed, to stamp what changed
+  var roomLastSealed = '';   // what was last sealed, so nothing reseals for nothing
+  var roomBusy = null, roomAgain = false;
+  function randomMark(n) {
+    var a = new Uint8Array(n), out = '', abc = 'abcdefghijkmnpqrstuvwxyz23456789';
+    try { crypto.getRandomValues(a); } catch (e) { for (var i = 0; i < n; i++) a[i] = Math.floor(Math.random() * 256); }
+    for (var j = 0; j < n; j++) out += abc.charAt(a[j] % abc.length);
+    return out;
+  }
+  // This device's own short mark. It never travels: two devices writing a
+  // letter each while apart must never hand them the same id.
+  function devMark() { if (!state.dev) state.dev = randomMark(4); return state.dev; }
+  function entryJson(e) { var c = {}, k; for (k in e) if (k !== 'at') c[k] = e[k]; return JSON.stringify(c); }
+  function roomSnapTake(r) {
+    roomSnap = {};
+    (r.entries || []).forEach(function (e) { roomSnap[e.id] = entryJson(e); });
+    roomLastSealed = JSON.stringify([E.roomContents(r), E.roomLocks(r)]);
+  }
+  function roomTakeContents(r, c) {
+    r.entries = c.entries || []; r.cats = c.cats || []; r.seq = c.seq || 0; r.gone = c.gone || {};
+  }
+  // Every letter changed since the last seal gets the moment of the change; a
+  // letter deleted leaves its id behind, so another device cannot hand it back.
+  function roomStampChanges(r, now) {
+    if (!roomSnap) return;
+    var seen = {};
+    (r.entries || []).forEach(function (e) {
+      seen[e.id] = 1;
+      if (roomSnap[e.id] !== entryJson(e)) e.at = now;
+    });
+    for (var id in roomSnap) if (!seen[id]) { r.gone = r.gone || {}; r.gone[id] = now; }
+  }
+  function roomPersist() {
+    var r = state && state.room;
+    if (!roomKey || !r || !E.roomIsLocked(r) || r.entries === undefined) return Promise.resolve();
+    if (roomBusy) { roomAgain = true; return roomBusy; }
+    var now = Date.now();
+    roomStampChanges(r, now);
+    var contents = E.roomContents(r), locks = E.roomLocks(r);
+    var flat = JSON.stringify([contents, locks]);
+    if (flat === roomLastSealed) return Promise.resolve();
+    var key = roomKey;
+    roomBusy = Promise.all([E.vaultSeal(key, contents), E.vaultSeal(key, locks)]).then(function (b) {
+      if (state.room !== r) return;
+      r.vault = b[0]; r.lockVault = b[1];
+      r.rev = (r.rev || 0) + 1; r.at = now;
+      roomLastSealed = flat;
+      roomSnap = {};
+      (r.entries || []).forEach(function (e) { roomSnap[e.id] = entryJson(e); });
+      E.saveState(state);
+      syncNote('room');
+    }).catch(function () {}).then(function () {
+      roomBusy = null;
+      if (roomAgain) { roomAgain = false; return roomPersist(); }
+    });
+    return roomBusy;
+  }
+  // Leaving the room: the last change is sealed, then the key and the letters
+  // are forgotten. Nothing of them stays in memory once the room is shut.
+  function roomForget() {
+    var r = state && state.room;
+    roomKey = null; roomSnap = null; roomLastSealed = '';
+    if (r && E.roomIsLocked(r)) { delete r.entries; delete r.cats; delete r.seq; delete r.gone; }
+  }
+  /* Another device's copy of the room, brought down by sync while the room was
+     shut (Decision 238). It can only be read with the letter key, so it waits
+     here until the room is next opened, and is combined then. */
+  function roomTakeIncoming(r) {
+    var jobs = [], changed = false;
+    if (r.locksStale && r.lockVault) {
+      jobs.push(E.vaultUnseal(roomKey, r.lockVault).then(function (L) {
+        ['door', 'knock', 'made', 'badgeChoice', 'badgeChosen', 'reminder', 'wordShape', 'hint', 'showWords']
+          .forEach(function (k) { if (L[k] !== undefined) r[k] = L[k]; });
+        delete r.locksStale; changed = true;
+      }, function () { delete r.locksStale; }));
+    }
+    if (r.incoming) {
+      var info = E.roomBlobRead(r.incoming);
+      if (info && info.kind === 'R2' && info.id === r.id) {
+        jobs.push(Promise.all([
+          E.vaultUnseal(roomKey, info.vault),
+          info.lockVault ? E.vaultUnseal(roomKey, info.lockVault) : Promise.resolve(null)
+        ]).then(function (both) {
+          roomTakeContents(r, E.roomMergeContents(E.roomContents(r), both[0]));
+          if (both[1] && (info.at || 0) > (r.at || 0)) {
+            var L = both[1];
+            ['door', 'knock', 'made', 'badgeChoice', 'badgeChosen', 'reminder', 'wordShape', 'hint', 'showWords']
+              .forEach(function (k) { if (L[k] !== undefined) r[k] = L[k]; });
+            r.keys = info.keys;
+          }
+          r.rev = Math.max(r.rev || 0, info.rev || 0);
+          delete r.incoming;
+          changed = true;               // the combined room is sealed afresh
+        }, function () { delete r.incoming; }));
+      } else {
+        delete r.incoming;
+      }
+    }
+    return Promise.all(jobs).then(function () { return changed; });
+  }
+  function wordCheck(r, pin) {
+    return E.roomIsLocked(r) ? E.vaultOpen(r.keys, pin) : E.unsealRoom(r.pinCheck, pin);
+  }
+  // A new word, sealing only the letter key again. The letters are untouched,
+  // and the spare key from the making goes on working.
+  function relockWord(word) {
+    var r = state.room;
+    if (!r || !E.roomIsLocked(r) || !roomKey) return Promise.reject(new Error('not-open'));
+    return E.vaultRewrap(r.keys, roomKey, word, (r.keys && r.keys.m) || 'any').then(function (k) {
+      r.keys = k; roomLastSealed = '';
+    });
+  }
+  /* Decision 237 — a room made before v1.1.5 is locked the first time its word
+     is given after the update. It seals, shows the spare key once, and only
+     then goes on. There is no "later": the word is in hand right now, and the
+     lock is built from it. */
+  var spareAfter = null;
+  function lockLegacyRoom(pin, why, after) {
+    var r = state.room;
+    E.vaultCreate(pin, 'any').then(function (v) {
+      r.keys = v.keys; r.id = r.id || randomMark(10);
+      if (r.badgeChosen === undefined) r.badgeChosen = false;
+      r.gone = r.gone || {};
+      roomKey = v.dek;
+      return Promise.all([E.vaultSeal(v.dek, E.roomContents(r)), E.vaultSeal(v.dek, E.roomLocks(r))]).then(function (b) {
+        r.vault = b[0]; r.lockVault = b[1]; r.rev = 1; r.at = Date.now(); r.syncedRev = 0;
+        delete r.pinCheck;
+        roomSnapTake(r);
+        E.saveState(state);               // from here the letters leave only sealed
+        showSpare(v.spare, why, after);
+      });
+    }).catch(function () {
+      // A browser with no locking at all is the only way here. The room opens
+      // as it always has, and nothing is lost.
+      roomKey = null;
+      if (after) after();
+    });
+  }
+  function showSpare(spare, why, after) {
+    spareAfter = after || null;
+    $('spareLead').textContent = (why === 'make') ? ''
+      : 'Your letters are now locked with your word on this device too, not only in your backup code.';
+    $('spareLead').style.display = (why === 'make') ? 'none' : '';
+    $('spareWords').textContent = spare.split(' ').join(' · ');
+    $('spareOld').style.display = (why === 'make') ? 'none' : '';
+    $('spareWrote').checked = false;
+    $('spareDone').disabled = true;
+    $('spareOverlay').classList.add('show');
+  }
+  // Came in with the spare key: a new word is set before anything else
+  // (Decision 235). The spare goes on working afterwards.
+  var spareEntry = false, caseWanted = 'any', pendingSpare = null;
+  function afterSpare() { spareEntry = true; openEdit('word'); }
+
   /* ---------- v1.1.1: the word panel (Decisions 118, 119) ----------
      Decision 119a — A WRONG WORD COSTS A WAIT THAT GROWS: 5s, 15s, a minute,
      then five. The word may be one tapped out of the door verse, and by the
@@ -2410,16 +2864,27 @@
     $('pinNote').textContent =
       why === 'sealed' ? 'Your word opens what you have put away. Sealed categories and sealed letters are both behind it.'
       : why === 'delEntry' ? 'Your word, once more. Deleting is the one act here that cannot be undone.'
+      : why === 'forgotKnock' ? 'Give your word or your spare key. Then you set a new knock; nothing inside is changed.'
+      : why === 'keepIt' ? 'Give your word or your spare key, and the room stays.'
+      : why === 'joinMine' ? 'First, this device\u2019s room: its word, or its spare key.'
+      : why === 'joinTheirs' ? 'Now the room in your sync: its word, or its spare key.'
       : '';
-    $('pinTitle').textContent = 'Your word';
+    $('pinTitle').textContent = why === 'joinMine' ? 'This device\u2019s room'
+      : why === 'joinTheirs' ? 'The room in your sync'
+      : why === 'forgotKnock' ? 'Forgot the knock?'
+      : 'Your word';
     var r = state.room;
+    /* v1.1.6 — these panels are reached from ordinary Settings, without the
+       verse or the knock, so they show neither the verse's words nor the hint:
+       either would hand a stranger part of the door. */
+    var bare = (why === 'forgotKnock' || why === 'keepIt' || why === 'joinMine' || why === 'joinTheirs');
     // The same box and the same chips for everyone who gets chips at all,
     // whatever shape was chosen — Decision 119. Decision 128 adds a second,
     // independent choice: whether the panel shows any word list. A bare box
     // never proves the word was typed, because it might belong to any of the
     // three shapes with chips simply turned off.
     var chips = $('pinWords');
-    if (r && !r.sealed && r.door && r.showWords !== false) {
+    if (!bare && r && !r.sealed && r.door && r.showWords !== false) {
       fillWordChips(chips, r.door, function (w) { $('pinBox').value = w; });
       chips.style.display = '';
     } else {
@@ -2430,7 +2895,7 @@
        reaches this panel without the verse and the knock, and nobody sees the
        hint without also having failed at the word. It unlocks nothing, so §7
        stands: this is not recovery, it is his own cue handed back to him. */
-    var hint = r && !r.sealed && r.hint;
+    var hint = !bare && r && !r.sealed && r.hint;
     if (hint && pinWrongCount() >= 2) {
       $('pinHint').textContent = 'Your hint: ' + hint;
       $('pinHint').style.display = '';
@@ -2446,7 +2911,8 @@
     state.roomTry = { n: n, until: Date.now() + E.tryWaitMs(n) };
     save();
     var r = state.room;
-    if (r && !r.sealed && r.hint && n >= 2) {
+    var bare = (pinFor === 'forgotKnock' || pinFor === 'keepIt' || pinFor === 'joinMine' || pinFor === 'joinTheirs');
+    if (!bare && r && !r.sealed && r.hint && n >= 2) {
       $('pinHint').textContent = 'Your hint: ' + r.hint;
       $('pinHint').style.display = '';
     }
@@ -2461,6 +2927,11 @@
   function pinEntered(pin) {
     if (pinWaitLeftMs() > 0) return;      // the wait is the lock's own patience
     var r = state.room;
+    // v1.1.6 — Decisions 261, 262, 263.
+    if (pinFor === 'forgotKnock') { forgotKnockGo(pin); return; }
+    if (pinFor === 'keepIt') { keepItGo(pin); return; }
+    if (pinFor === 'joinMine') { if (join && r) joinOpenMine(pin); else $('pinOverlay').classList.remove('show'); return; }
+    if (pinFor === 'joinTheirs') { if (join) joinOpenTheirs(pin); else $('pinOverlay').classList.remove('show'); return; }
     /* v1.1.4, Decision 161 — F42, second guard. 'open' is the WORD-ALONE door
        offered in Settings after a restore, and it was one-off by design and not
        in the build: the button stayed on screen for the rest of the session and
@@ -2476,7 +2947,45 @@
         roomStatusLine();
         return;
       }
+      /* v1.1.5 — a room that travelled locked (R2): the word or the spare key
+         opens it, and it arrives exactly as it was, already locked. */
+      var info = E.roomBlobRead(r.sealed);
+      if (info && info.kind === 'R2') {
+        $('pinNote').textContent = 'Opening…';
+        var fromSync = (r.from === 'sync');
+        E.roomFromBlob(info, pin).then(function (got) {
+          var room = got.room;
+          restoredWords(fromSync);
+          room.syncedRev = 0;
+          // The copy it was opened from is the one sync last saw (Decision 238).
+          room.syncedIv = ivOf(info.vault); room.syncedSpare = spareHalf(info.keys);
+          state.room = room; roomKey = got.dek; roomSnapTake(room);
+          pinRight(); save();
+          $('pinOverlay').classList.remove('show');
+          roomStatusLine();
+          restoreMustChange = false; restoredSpare = (got.via === 'spare');
+          $('restoredKeep').style.display = '';
+          $('restoredOverlay').classList.add('show');
+        }, function () { $('pinNote').textContent = ''; pinWrong(); });
+        return;
+      }
       E.unsealRoom(r.sealed, pin).then(function (opened) {
+        /* v1.1.5, Decision 237 — a code made before v1.1.5 (R1) opens with the
+           word as it always did, and the room is locked on the spot, before
+           anything else, with its spare key shown once. */
+        if (E.vaultCreate) {
+          opened.pinCheck = null;
+          state.room = opened; pinRight();
+          $('pinOverlay').classList.remove('show');
+          lockLegacyRoom(pin, 'restore', function () {
+            roomStatusLine();
+            restoredWords(false);
+            restoreMustChange = false; restoredSpare = false;
+            $('restoredKeep').style.display = '';
+            $('restoredOverlay').classList.add('show');
+          });
+          return;
+        }
         /* v1.1.4, Decision 159 — F40, the worst of the twelve. unsealRoom hands
            back pinCheck null and nothing ever wrote a new one, so a restored
            room opened once could never be opened again: the door had nothing
@@ -2496,12 +3005,61 @@
       return;
     }
     if (pinFor === 'room') {
+      /* v1.1.5 — the word now opens the letters themselves, not only the door.
+         The spare key is typed into this same box (Decision 235): a separate
+         button here would tell a stranger which panel he had reached. */
+      if (r && E.roomIsLocked(r)) {
+        $('pinNote').textContent = 'Opening…';
+        E.vaultOpen(r.keys, pin).then(function (got) {
+          return E.vaultUnseal(got.dek, r.vault).then(function (c) {
+            roomKey = got.dek; roomTakeContents(r, c);
+            roomSnap = null;
+            return roomTakeIncoming(r).then(function (changed) { return { via: got.via, changed: changed }; });
+          });
+        }).then(function (o) {
+          var via = o.via;
+          roomSnapTake(r);
+          if (o.changed) roomLastSealed = '';
+          if (roomDownStop(r)) { save(); roomStatusLine(); }   // v1.1.6, Decision 262
+          pinRight();
+          $('pinOverlay').classList.remove('show');
+          openRoom();
+          roomPersist();
+          if (via === 'spare') afterSpare();
+        }, function () { roomKey = null; $('pinNote').textContent = ''; pinWrong(); });
+        return;
+      }
       if (!r || !r.pinCheck) { $('pinOverlay').classList.remove('show'); return; }
       E.unsealRoom(r.pinCheck, pin).then(function () {
         pinRight();
+        if (roomDownStop(r)) roomStatusLine();               // v1.1.6, Decision 262
         $('pinOverlay').classList.remove('show');
-        openRoom();
+        // Decision 237 — locked now, the spare key shown once, then in.
+        lockLegacyRoom(pin, 'door', openRoom);
       }, pinWrong);
+      return;
+    }
+    /* v1.1.5, Decision 236 — capitals in the word. Changing the rule rebuilds
+       the lock around the word, so the word itself is asked for: the spare key
+       can open the room, but it cannot tell the app what the word is. */
+    if (pinFor === 'case') {
+      if (!r || !E.roomIsLocked(r)) { $('pinOverlay').classList.remove('show'); return; }
+      var want = caseWanted;
+      E.vaultOpen(r.keys, pin).then(function (got) {
+        if (got.via !== 'word') { var e = new Error('spare'); e.spare = true; throw e; }
+        return E.vaultRewrap(r.keys, got.dek, pin, want);
+      }).then(function (k) {
+        r.keys = k; roomLastSealed = '';
+        pinRight(); save();
+        $('pinOverlay').classList.remove('show');
+        renderRoomAdmin();
+        $('roomCaseNote').textContent = (want === 'exact')
+          ? 'Capitals now count. From now on, type your word exactly as you just did.'
+          : 'Capitals no longer count. Faith, faith and FAITH all open the room.';
+      }, function (err) {
+        if (err && err.spare) { $('pinNote').textContent = 'Type your word itself here, not the spare key.'; return; }
+        pinWrong();
+      });
       return;
     }
     /* v1.1.4, Decision 171 — the word stands at the door of the Sealed list,
@@ -2510,9 +3068,9 @@
        not lost, it has moved one step earlier — and it now covers letters as
        well as categories. Decision 173 keeps a second ask where it matters. */
     if (pinFor === 'sealed' || pinFor === 'delEntry' || (pinFor && pinFor.indexOf('unseal:') === 0)) {
-      if (!r || !r.pinCheck) { $('pinOverlay').classList.remove('show'); return; }
+      if (!r || !(r.pinCheck || E.roomIsLocked(r))) { $('pinOverlay').classList.remove('show'); return; }
       var was = pinFor;
-      E.unsealRoom(r.pinCheck, pin).then(function () {
+      wordCheck(r, pin).then(function () {
         pinRight();
         $('pinOverlay').classList.remove('show');
         if (was === 'sealed') { sealedUnlocked = true; renderRoomAdmin(); return; }
@@ -2526,12 +3084,23 @@
      repaired, the screen repaints so the stale "A room arrived with a restored
      code…" line and the open-it-once button both go at once, and the man is
      told plainly that the ordinary door is back. */
-  var restoreMustChange = false;
+  var restoreMustChange = false, restoredSpare = false;
+  // v1.1.6 — the screen after the first opening says where the room came from.
+  function restoredWords(fromSync) {
+    $('restoredFrom').textContent = fromSync ? 'in your sync' : 'inside this code';
+    $('restoredMend').textContent = fromSync
+      ? 'This device now knows where the door is.'
+      : 'The door is mended and this device knows where it is again.';
+    $('restoredOnly').textContent = fromSync
+      ? 'this device will hold a room you cannot reach'
+      : 'this code stays your only way in, and if you lose it you lose the room';
+  }
   function finishRestore(opened, mended) {
     state.room = opened; pinRight(); save();
     $('pinOverlay').classList.remove('show');
     roomStatusLine();
     restoreMustChange = !mended;
+    restoredWords(false);
     $('restoredKeep').style.display = mended ? '' : 'none';
     $('restoredOverlay').classList.add('show');
   }
@@ -2622,7 +3191,7 @@
     applyBadgeChoice();
     renderRoomSeason();
     $('roomBox').value = '';
-    $('mkCatPicker').style.display = 'none';   // v1.1.3 — opens closed, every time
+    if ($('roomTitle')) $('roomTitle').value = '';   // v1.1.5, Decision 223
     // Write first, file after. Nothing is asked of him at the door — and the
     // page can be walked past, because a man may come only to read.
     $('roomWriteNote').textContent = 'Nothing here is counted, scored or seen. You can also just read what is here.';
@@ -2632,6 +3201,8 @@
   function closeRoom() {
     roomOpen = false; sealedUnlocked = false;
     $('roomSheet').classList.remove('show');
+    // v1.1.5 — the last change sealed, then the key and the letters forgotten.
+    roomPersist().then(function () { if (!roomOpen) roomForget(); });
   }
 
   var fileTarget = null;
@@ -2712,7 +3283,7 @@
     // incomplete; it is simply letters shown by date.
     if (roomEntriesFor('').length) wrap.appendChild(catRow('Dated Letters', ''));
     if (roomEntriesFor(LIST_STRUGGLES).length) wrap.appendChild(catRow('Struggles', LIST_STRUGGLES));
-    if (roomEntriesFor(LIST_TESTIMONIES).length) wrap.appendChild(catRow('Testimonies', LIST_TESTIMONIES));
+    if (roomEntriesFor(LIST_TESTIMONIES).length) wrap.appendChild(catRow('Thanksgiving / Testimonies', LIST_TESTIMONIES));
     roomShow('roomList');
   }
   function catRow(label, key) {
@@ -2858,13 +3429,14 @@
     $('foStruggle').checked = !!entry.struggle;
     $('foTestimony').checked = !!entry.testimony;
     $('foCat').value = (entry.cats && entry.cats[0]) || '';
-    $('foDontAsk').checked = false;
     $('foCatPicker').style.display = 'none';   // v1.1.3 — opens closed, every time
-    $('foTitle').textContent = mode === 'auto' ? 'Filed as a letter.' : 'Filing';
+    /* v1.1.6, Decisions 253 + 254 — Keep this always opens this box, and it is
+       always asked: "Don't ask me this again" is gone, because this box is now
+       the only place a letter is filed. */
+    $('foTitle').textContent = 'Where do you want to file it?';
     $('foNote').textContent = mode === 'auto'
-      ? 'Nothing was ticked, so this would be filed as a plain letter — nothing more. If you want it under Struggle, Testimony, or a category, choose it now. Nothing is written until you press Done.'
-      : 'Change how this is filed. It can always be changed again later.';
-    $('foDontAskRow').style.display = mode === 'auto' ? '' : 'none';
+      ? 'If you choose nothing, it is kept as a letter to God.'
+      : 'If you choose nothing, it is kept as a letter to God. It can always be changed again later.';
     $('foBack').textContent = mode === 'auto' ? '‹ Back to the writing' : '‹ Back';
     $('fileOverlay').classList.add('show');
   }
@@ -2888,7 +3460,7 @@
     var marks = [];
     if (e.letter) marks.push('Letter');
     if (e.struggle) marks.push(e.endAt ? 'Struggle — ended ' + longDate(e.endAt) : 'Struggle — open');
-    if (e.testimony) marks.push('Testimony');
+    if (e.testimony) marks.push('Thanksgiving / Testimony');
     if (e.other) marks.push('Other');
     if (marks.length) {
       var m = document.createElement('div'); m.className = 'marks'; m.textContent = marks.join(' · ');
@@ -3043,7 +3615,11 @@
     var r = state.room.reminder || { on: false, text: '' };
     $('remOn').checked = !!r.on;
     $('remText').value = r.text || '';
-    $('roomBadgeChoice').value = state.room.badgeChoice || 'room';
+    $('roomBadgeChoice').value = state.room.badgeChoice || 'menu';
+    if ($('roomWordCase')) {
+      $('roomWordCase').value = (state.room.keys && state.room.keys.m === 'exact') ? 'exact' : 'any';
+      $('roomWordCase').disabled = !E.roomIsLocked(state.room);
+    }
     /* v1.1.4, Decision 171 — ONE sealed door, in two parts, behind the word.
        Sealed categories were already here; sealed letters join them, because a
        sealed letter has nowhere else to exist (Decision 167). The word is asked
@@ -3116,9 +3692,9 @@
      (Decision 174) carries here too and no stale name is ever kept. */
   function entryHome(e) {
     if ((e.cats || []).length) return e.cats.join(' · ');
-    if (e.struggle && e.testimony) return 'Struggles · Testimonies';
+    if (e.struggle && e.testimony) return 'Struggles · Thanksgiving / Testimonies';
     if (e.struggle) return 'Struggles';
-    if (e.testimony) return 'Testimonies';
+    if (e.testimony) return 'Thanksgiving / Testimonies';
     return 'Dated Letters';
   }
   var sealedOpenId = null;
@@ -3214,8 +3790,15 @@
      F11 existed to end. The number matches the add-on it was built from; the
      word "Web" is what tells the two apart, because they are not identical:
      this build carries the long-press screen hold and the add-on does not. */
-  var WEB_VERSION = 'Web 1.1.4 (NLT)';
-  function extVersion() { return WEB_VERSION; }
+  /* v1.1.5 — the version label changes on EVERY upload (lesson of 23 Sep:
+     two web uploads both called themselves "Web 1.1.4 (NLT)" and nobody could
+     tell which was live). The add-on reads its own manifest; the website
+     carries its label here, with the word Web to tell them apart. */
+  var WEB_VERSION = 'Web 1.1.6';
+  function extVersion() {
+    if (!IS_EXT) return WEB_VERSION;
+    try { return 'Version ' + ((XAPI && XAPI.runtime.getManifest().version) || ''); } catch (e) { return ''; }
+  }
   function paintVersion() {
     var v = extVersion();
     if (!v) return;
@@ -3226,17 +3809,306 @@
   }
   function roomStatusLine() {
     var el = $('roomStatus');
-    if (!state.room) { el.textContent = ''; $('btnRoomMake').style.display = ''; $('btnRoomOpenSealed').style.display = 'none'; return; }
-    if (state.room.sealed) {
-      el.textContent = 'A room arrived with a restored code. It is sealed, and this device does not know where its door is until it is opened once.';
-      $('btnRoomMake').style.display = 'none';
-      $('btnRoomOpenSealed').style.display = '';
+    if (!el || !state) return;
+    roomDownCheck();
+    var r = state.room, sy = syncState();
+    var show = function (id, on) { var b = $(id); if (b) b.style.display = on ? '' : 'none'; };
+    ['btnRoomBring', 'btnRoomMake', 'btnRoomOpenSealed', 'btnRoomForgot', 'btnRoomDown', 'btnRoomKeepIt'].forEach(function (id) { show(id, false); });
+    show('roomBringLine', false);
+    // Decision 263 — the question stands until it is answered.
+    show('roomClashBox', !!(sy.roomClash && r && syncOn()));
+    if (!r) {
+      /* v1.1.6, Decision 255 — a room kept in sync is offered first, and Make a
+         room is not offered while it waits, so the synced room cannot be
+         overwritten by mistake. */
+      if (syncOn() && sy.roomWaits) {
+        el.textContent = 'Your room is kept in your sync. Bring it to this device?';
+        show('btnRoomBring', true);
+        return;
+      }
+      el.textContent = state.roomDownOn
+        ? 'The room on this device was taken down on ' + longDate(state.roomDownOn) + '. Any copy in your sync or in a backup code was not touched.'
+        : '';
+      show('btnRoomMake', true);
+      show('roomBringLine', true);      // Decision 256
       return;
     }
-    el.textContent = 'A room stands. Go to your verse and knock.';
-    $('btnRoomMake').style.display = 'none';
-    $('btnRoomOpenSealed').style.display = 'none';
+    if (r.sealed) {
+      el.textContent = (r.from === 'sync')
+        ? 'Your room has come from your sync. Open it once with your word or your spare key, and it stands on this device.'
+        : 'A room arrived with a restored code. It is sealed, and this device does not know where its door is until it is opened once.';
+      $('btnRoomOpenSealed').textContent = (r.from === 'sync') ? 'Open my room' : 'Open the room in this code';
+      show('btnRoomOpenSealed', true);
+      return;
+    }
+    /* v1.1.6, Decision 262 — a take-down under way says when, and the owner
+       stops it by opening the room with the word or the spare key. */
+    if (r.downAt) {
+      el.textContent = 'This room will be taken down on ' + longDate(E.todayStr(new Date(r.downAt))) + '. To keep it, open it with your word or your spare key.';
+      show('btnRoomKeepIt', true);
+      return;
+    }
+    /* v1.1.5, Decision 237 — said plainly while it is still true: a room made
+       before this version is locked the next time its word is given. */
+    el.textContent = E.roomIsLocked(r)
+      ? 'A room stands. Go to your verse and knock.'
+      : 'A room stands. Go to your verse and knock. The next time you go in, your letters will be locked with your word on this device too, and you will be given a spare key.';
+    show('btnRoomForgot', true);       // Decision 261
+    show('btnRoomDown', true);
   }
+
+  /* ================= v1.1.6 — DECISIONS 255, 256, 261, 262, 263 ================= */
+  // Decision 255 — the room waiting in sync, brought down as a locked room
+  // that opens at the door with the word or the spare key, as usual.
+  function roomBring() {
+    var sy = syncState();
+    if (state.room || !sy.roomWaits) { roomStatusLine(); return; }
+    state.room = { door: null, knock: null, sealed: sy.roomWaits, from: 'sync' };
+    sy.roomWaits = '';
+    sy.room = true;                    // once brought, room sync is on for this device
+    E.saveState(state);
+    roomStatusLine(); applyBadgeChoice(); paintSync();
+    askPin('open');
+  }
+  // Decision 256 — from a device that has no room yet.
+  function openBring() {
+    var sy = syncState();
+    var canSync = syncAvailable(), on = syncOn();
+    $('bringSync').style.display = (canSync && !on) ? '' : 'none';
+    $('bringSyncNow').style.display = on ? '' : 'none';
+    var code = 'Or paste a backup code from your other device. Your room comes with it, and opens with your word or your spare key.';
+    $('bringText').textContent = !canSync
+      ? 'Paste a backup code from your other device. Your room comes with it, and opens with your word or your spare key.'
+      : on
+        ? 'Sync is on, and your sync holds no room yet. On the other device, turn on “Also keep The Secret Place in sync” and tap Sync now there; then tap Sync now here. ' + code
+        : 'Turn on sync, and if your room is kept in your sync, this device offers to bring it. ' + code;
+    $('bringOverlay').classList.add('show');
+  }
+  function bringByCode() {
+    $('bringOverlay').classList.remove('show');
+    $('backupNote').textContent = 'Paste the backup code from your other device here, then press Merge. Your room comes with it.';
+    try { $('backupBox').scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) {}
+    setTimeout(function () { try { $('backupBox').focus(); } catch (e) {} }, 300);
+  }
+
+  /* Decision 262 — "Take down this room": this device only, after 7 days.
+     It never touches the sync copy or any backup code, so the room can come
+     back from either. Anyone holding the phone could already wipe the room by
+     removing the add-on or clearing the site's data; the wait is so the owner
+     has a week to notice and stop it, which takes the word or the spare key. */
+  var DOWN_WAIT_MS = 7 * 24 * 3600 * 1000;
+  function roomDownAsk() {
+    roomAsk('Take down this room?',
+      'Only for a room nobody can open any more: the knock, the word and the spare key all lost. ' +
+      'After 7 days the room is taken off this device, and the letters on this device can never be read again. ' +
+      'Any copy in your sync or in a backup code is not touched, so the room can still come back from either. ' +
+      'Until then, opening the room with your word or your spare key stops it.',
+      'Take it down in 7 days',
+      function () {
+        askClose();
+        if (!state.room) return;
+        state.room.downAt = Date.now() + DOWN_WAIT_MS;
+        save(); roomStatusLine();
+      });
+  }
+  function roomDownCheck() {
+    var r = state && state.room;
+    if (!r || !r.downAt || Date.now() < r.downAt) return;
+    if (roomOpen) closeRoom();
+    roomKey = null; roomSnap = null; roomLastSealed = '';
+    state.room = null;
+    state.roomDownOn = E.todayStr();
+    var sy = syncState();
+    sy.room = false;                   // the copy in sync is left exactly as it is
+    E.saveState(state);
+    applyBadgeChoice();
+  }
+  // Any opening with the word or the spare key stops a take-down.
+  function roomDownStop(r) {
+    if (r && r.downAt) { delete r.downAt; return true; }
+    return false;
+  }
+
+  /* Decision 261 — "Forgot the knock?": the word or the spare key, then a
+     new knock. Nothing inside is changed. */
+  var forgotFlow = false, forgotSpare = false;
+  function forgotKnockGo(pin) {
+    var r = state.room;
+    if (!r) return;
+    if (E.roomIsLocked(r)) {
+      $('pinNote').textContent = 'Opening…';
+      E.vaultOpen(r.keys, pin).then(function (got) {
+        return E.vaultUnseal(got.dek, r.vault).then(function (c) {
+          roomKey = got.dek; roomTakeContents(r, c); roomSnap = null;
+          return roomTakeIncoming(r).then(function () { return got.via; });
+        });
+      }).then(function (via) {
+        roomSnapTake(r); roomLastSealed = '';
+        roomDownStop(r);
+        pinRight(); save();
+        $('pinOverlay').classList.remove('show');
+        forgotFlow = true; forgotSpare = (via === 'spare');
+        openEdit('knock');
+        $('makeNote').textContent = forgotSpare
+          ? 'Set a new knock. Because you came in with your spare key, you then set a new word. Your verse and your letters stay exactly as they are.'
+          : 'Set a new knock. Your verse, your word and your letters stay exactly as they are.';
+      }, function () { roomKey = null; $('pinNote').textContent = ''; pinWrong(); });
+      return;
+    }
+    if (!r.pinCheck) { $('pinOverlay').classList.remove('show'); return; }
+    // A room from before v1.1.5: locked first, as at the door (Decision 237).
+    E.unsealRoom(r.pinCheck, pin).then(function () {
+      roomDownStop(r);
+      pinRight();
+      $('pinOverlay').classList.remove('show');
+      lockLegacyRoom(pin, 'door', function () {
+        forgotFlow = true; forgotSpare = false;
+        openEdit('knock');
+        $('makeNote').textContent = 'Set a new knock. Your verse, your word and your letters stay exactly as they are.';
+      });
+    }, pinWrong);
+  }
+  // The making overlay has closed after a change made from outside the room:
+  // the change is sealed, then the key and the letters are forgotten.
+  function makeClosedOutside() {
+    if (roomOpen || $('makeOverlay').classList.contains('show')) return;
+    forgotFlow = false; forgotSpare = false;
+    if (roomKey) roomPersist().then(function () { if (!roomOpen) roomForget(); });
+  }
+  function keepItGo(pin) {
+    var r = state.room;
+    if (!r) return;
+    wordCheck(r, pin).then(function () {
+      roomDownStop(r);
+      pinRight(); save();
+      $('pinOverlay').classList.remove('show');
+      roomStatusLine();
+      $('roomStatus').textContent = 'Your room stays. Nothing will be taken down. ' + $('roomStatus').textContent;
+    }, pinWrong);
+  }
+
+  /* Decision 263 — this device has a room, and sync brings a different one.
+     Bring them together: each room is opened with its own word (or spare
+     key); every letter from both is kept in one room; the joined room keeps
+     ONE of the two locks, its verse, knock, word and spare key together. It
+     takes the synced room's identity, so the room's other devices receive it
+     as their own room changed. No new spare key is made. */
+  var join = null;
+  function joinStart() {
+    var sy = syncState();
+    if (!sy.roomClash || !state.room) { roomStatusLine(); return; }
+    join = { step: 'mine' };
+    askPin('joinMine');
+  }
+  function syncedRoomBlob() {
+    return (state.sync && state.sync.clashBlob) || '';
+  }
+  function joinOpenMine(pin) {
+    var r = state.room;
+    var done = function (o) {
+      join.mine = o;
+      pinRight();
+      join.step = 'theirs';
+      askPin('joinTheirs');
+    };
+    if (r.sealed) {
+      var S = E.roomBlobRead(r.sealed);
+      if (!S || S.kind !== 'R2') { $('pinOverlay').classList.remove('show'); return; }
+      $('pinNote').textContent = 'Opening…';
+      E.roomFromBlob(S, pin).then(function (got) {
+        done({ room: got.room, dek: got.dek });
+      }, function () { $('pinNote').textContent = ''; pinWrong(); });
+      return;
+    }
+    $('pinNote').textContent = 'Opening…';
+    E.vaultOpen(r.keys, pin).then(function (got) {
+      return Promise.all([E.vaultUnseal(got.dek, r.vault),
+        r.lockVault ? E.vaultUnseal(got.dek, r.lockVault).catch(function () { return null; }) : Promise.resolve(null)])
+        .then(function (b) {
+          var c = b[0], room = {};
+          for (var k in r) room[k] = r[k];
+          room.entries = c.entries || []; room.cats = c.cats || []; room.seq = c.seq || 0; room.gone = c.gone || {};
+          done({ room: room, dek: got.dek });
+        });
+    }).catch(function () { $('pinNote').textContent = ''; pinWrong(); });
+  }
+  function joinOpenTheirs(pin) {
+    var info = E.roomBlobRead(syncedRoomBlob());
+    if (!info || info.kind !== 'R2') { $('pinOverlay').classList.remove('show'); join = null; return; }
+    $('pinNote').textContent = 'Opening…';
+    E.roomFromBlob(info, pin).then(function (got) {
+      join.theirs = { room: got.room, dek: got.dek, info: info };
+      pinRight();
+      $('pinOverlay').classList.remove('show');
+      $('joinNote').textContent = '';
+      $('joinOverlay').classList.add('show');
+    }, function () { $('pinNote').textContent = ''; pinWrong(); });
+  }
+  // Two rooms can each have a letter called e1. One of a clashing pair is
+  // renamed, so both are kept.
+  function joinContents(a, b) {
+    var ids = {};
+    (a.entries || []).forEach(function (e) { ids[e.id] = e; });
+    var mark = randomMark(3), bb = { entries: [], cats: b.cats || [], seq: b.seq || 0, gone: {} };
+    (b.entries || []).forEach(function (e) {
+      var had = ids[e.id];
+      if (had && JSON.stringify(had) !== JSON.stringify(e)) {
+        var c = {}; for (var k in e) c[k] = e[k];
+        c.id = e.id + '.j' + mark; bb.entries.push(c);
+      } else bb.entries.push(e);
+    });
+    for (var g in (b.gone || {})) if (!ids[g]) bb.gone[g] = b.gone[g];
+    return E.roomMergeContents(a, bb);
+  }
+  function joinFinish(keepMine) {
+    if (!join || !join.mine || !join.theirs) return;
+    var A = join.mine.room, B = join.theirs.room, info = join.theirs.info;
+    var lock = keepMine ? A : B, dek = keepMine ? join.mine.dek : join.theirs.dek;
+    var c = joinContents(B, A);
+    var now = Date.now();
+    var room = {
+      door: lock.door, knock: lock.knock, made: lock.made,
+      badgeChoice: lock.badgeChoice || 'menu', badgeChosen: !!lock.badgeChosen,
+      reminder: lock.reminder || null, wordShape: lock.wordShape || 'typed',
+      hint: lock.hint || '', showWords: lock.showWords !== false,
+      id: info.id, keys: lock.keys,
+      rev: Math.max(A.rev || 0, B.rev || 0) + 1, at: now,
+      entries: c.entries, cats: c.cats, seq: c.seq, gone: c.gone,
+      pinCheck: null, sealed: null,
+      syncedIv: ivOf(info.vault), syncedSpare: spareHalf(info.keys)
+    };
+    $('joinNote').textContent = 'Joining…';
+    Promise.all([E.vaultSeal(dek, E.roomContents(room)), E.vaultSeal(dek, E.roomLocks(room))]).then(function (b) {
+      room.vault = b[0]; room.lockVault = b[1];
+      if (roomOpen) closeRoom();
+      roomKey = null; roomSnap = null; roomLastSealed = '';
+      delete room.entries; delete room.cats; delete room.seq; delete room.gone;
+      state.room = room;
+      var sy = syncState();
+      sy.room = true; sy.roomClash = false; sy.clashBlob = '';
+      sy.note = 'Your two rooms are now one. It opens with ' + (keepMine ? 'this device’s' : 'the synced room’s') + ' verse, knock, word and spare key.';
+      join = null;
+      E.saveState(state);
+      $('joinOverlay').classList.remove('show');
+      roomStatusLine(); applyBadgeChoice(); paintSync();
+      syncNote('room');
+      runSync('room');
+    }, function () { $('joinNote').textContent = 'This browser would not lock the room. Nothing has changed.'; });
+  }
+  function joinCancel() {
+    join = null;
+    $('joinOverlay').classList.remove('show');
+  }
+  // Decision 263 — Keep them apart: room sync stays off on this device; the
+  // other room waits in sync, untouched.
+  function keepApart() {
+    var sy = syncState();
+    sy.room = false; sy.roomClash = false; sy.clashBlob = '';
+    sy.note = 'Kept apart. Room sync is off on this device; the room in your sync is untouched.';
+    E.saveState(state);
+    roomStatusLine(); paintSync();
+  }
+
   function fillMakePickers() {
     var b = $('mkBook');
     if (b.options.length) return;
@@ -3508,15 +4380,30 @@
       paintWordShape();
       $('makeStep3').style.display = '';
       $('makeNext').textContent = 'Save the new word';
+      // v1.1.5, Decision 235 — in by the spare key: a new word, before anything.
+      if (spareEntry) {
+        $('makeNote').textContent = 'You came in with your spare key. Set a new word now — your spare key goes on working afterwards.';
+        $('makeCancel').style.display = 'none';
+      }
     }
     $('makeOverlay').classList.add('show');
   }
 
-  function backupCode(cb) {
+  function backupCode(cb, opts) {
     // The room travels with the code, sealed with the PIN. A man with no room
     // carries no dead weight — the code is exactly the code.
-    var body = E.exportCode(state);
+    var body = E.exportCode(state, opts);
     if (!state.room || state.room.sealed) return cb(state.room && state.room.sealed ? body + '~' + state.room.sealed : body);
+    /* v1.1.5 — a locked room is already sealed on the device, so it travels as
+       it stands and no word is asked for here any more. F39's danger was a
+       stranger sealing the letters under a word of HIS choosing; there is now
+       nothing readable for anyone to seal, and the copy that leaves opens only
+       with the owner's word or spare key. */
+    if (E.roomIsLocked(state.room)) {
+      var go = function () { var blob = E.roomBlob(state.room); cb(blob ? body + '~' + blob : body); };
+      if (roomBusy) roomBusy.then(go, go); else go();
+      return;
+    }
     askPinFor(function (pin) {
       if (!pin) return cb(body);
       E.sealRoom(state.room, pin).then(function (blob) { cb(body + '~' + blob); },
@@ -3600,6 +4487,462 @@
     });
   }
 
+  /* ================= v1.1.5 — SYNC (Decisions 238–242, 245, 249) =================
+     Your reading, combined with the copy in your own Google Drive whenever the
+     app opens or comes back to the front, and sent up a few seconds after
+     anything changes. The rules of combining are in engine.js (syncMerge);
+     the road to Google is sync.js. This is the part between: when to go, what
+     to send, what to keep, and what to say on the screen.
+
+     Decision 245 — Google's approval is still under review, so sync is hidden
+     from every reader until it arrives. SYNC_OPEN becomes true in the small
+     update that follows the approval. Until then it can be opened on a single
+     device for testing: tap the version line under About seven times. */
+  var SYNC_OPEN = false;
+  var DRIVE = self.DrawNighDrive || null;
+  function syncState() {
+    if (!state.sync) state.sync = { on: false, room: false, asked: false };
+    return state.sync;
+  }
+  function syncAvailable() { return !!DRIVE && (SYNC_OPEN || !!syncState().preview); }
+  function syncOn() { return syncAvailable() && !!syncState().on; }
+  // Something changed: it goes up a few seconds later, so a run of taps is one
+  // trip, not twenty.
+  var pushTimer = null;
+  function syncNote(kind) {
+    if (!state || !state.sync || !state.sync.on || !syncAvailable()) return;
+    var sy = state.sync;
+    sy.dirtyN = (sy.dirtyN || 0) + 1;
+    if (!sy.dirty) { sy.dirty = true; E.saveState(state); }
+    if (pushTimer) clearTimeout(pushTimer);
+    pushTimer = setTimeout(function () { pushTimer = null; runSync('push'); }, 15000);
+  }
+  // What the reading IS, without what belongs to one device (its settings, its
+  // verse of the day, its ladder clock). Two copies with the same print need
+  // nothing sent either way.
+  function syncPrint(st) {
+    var p = E.toPacked(st);
+    delete p.S; delete p.vo; delete p.ld;
+    return JSON.stringify(p);
+  }
+  function ivOf(v) { return String(v || '').split('.')[0]; }
+
+  /* A sign-in key has run out (they last an hour). In the add-on a tab is
+     opened behind the reader and closes by itself; on the website the page
+     hops to Google and straight back, but only as the app opens or returns —
+     never while a man is reading. If Google wants him to choose or agree to
+     something, nothing is forced: sync says it is waiting, and he taps. */
+  function ensureToken(why) {
+    var sy = syncState();
+    return DRIVE.hasToken().then(function (has) {
+      if (has) return true;
+      var hint = sy.email || '';
+      var failedLately = sy.silentFail && (Date.now() - sy.silentFail < 6 * 3600 * 1000);
+      if (IS_EXT) {
+        if (failedLately && why !== 'now') return false;
+        return DRIVE.signIn({ silent: true, hint: hint }).then(function (r) {
+          if (r && r.ok) { sy.silentFail = 0; return true; }
+          sy.silentFail = Date.now(); E.saveState(state);
+          if (why === 'now') return DRIVE.signIn({ silent: false, hint: hint }).then(function (r2) { return !!(r2 && r2.ok); });
+          return false;
+        });
+      }
+      var triedLately = sy.silentTry && (Date.now() - sy.silentTry < 10 * 60 * 1000);
+      if (why === 'now') {
+        DRIVE.signIn({ silent: false, hint: hint });   // the page leaves for Google here
+        return new Promise(function () {});
+      }
+      if ((why === 'open' || why === 'resume') && !failedLately && !triedLately) {
+        sy.silentTry = Date.now(); E.saveState(state);
+        DRIVE.signIn({ silent: true, hint: hint });    // the page leaves for Google here
+        return new Promise(function () {});
+      }
+      return false;
+    });
+  }
+
+  var syncing = null, syncAgain = false;
+  function runSync(why) {
+    if (!syncOn()) return Promise.resolve();
+    if (syncing) { syncAgain = true; return syncing; }
+    var sy = syncState();
+    sy.busy = true; paintSync();
+    var retried = false;
+    function attempt() {
+      return ensureToken(why).then(function (ok) {
+        if (!ok) { sy.err = 'auth'; return; }
+        return pass();
+      }).catch(function (err) {
+        // A key Google has already let go of (it can end before its hour is
+        // up): forgotten, and asked for again once.
+        if (err && err.auth && !retried) { retried = true; return attempt(); }
+        throw err;
+      });
+    }
+    function pass() {
+      var startN = sy.dirtyN || 0;
+      // Unchanged since this device last saw it, and nothing new here: there is
+      // nothing to fetch and nothing to send.
+      var known = sy.dirty ? null : sy.ver;
+      return DRIVE.read(known).then(function (remote) {
+        if (remote && remote.same) { sy.ver = remote.version; sy.fileId = remote.fileId; return; }
+        if (remote && remote.data && remote.data.code && E.codeKind(remote.data.code) === 'newer') {
+          sy.err = 'newer'; return;
+        }
+        var theirsPrint = null, changed = false;
+        if (remote && remote.data) {
+          var took = syncTakeRemote(remote.data);
+          changed = took.changed; theirsPrint = took.theirsPrint;
+        }
+        var remoteRoom = (remote && remote.data) ? (remote.data.room || null) : null;
+        var rm = syncRoom(remoteRoom, remote && remote.data ? remote.data.roomGone : null);
+        var mine = syncPrint(state);
+        var needWrite = !remote || remote.broken || sy.dirty || rm.changed ||
+          (theirsPrint !== null && theirsPrint !== mine);
+        if (changed) syncRepaint(why);
+        if (!needWrite) {
+          sy.ver = remote.version; sy.fileId = remote.fileId;
+          return;
+        }
+        var data = {
+          app: 'DrawNigh', format: 1, at: Date.now(), by: IS_EXT ? 'add-on' : 'web',
+          code: E.exportCode(state),
+          room: rm.out || null
+        };
+        if (sy.roomGone) data.roomGone = sy.roomGone;
+        else if (remote && remote.data && remote.data.roomGone && !data.room) data.roomGone = remote.data.roomGone;
+        return DRIVE.write(remote ? remote.fileId : null, data).then(function (w) {
+          sy.ver = w.version; sy.fileId = w.fileId;
+          if ((sy.dirtyN || 0) === startN) sy.dirty = false;
+          if (rm.iv && state.room) { state.room.syncedIv = rm.iv; state.room.syncedSpare = spareHalf(state.room.keys); }
+          if (sy.roomGone && !data.room) sy.roomGone = '';
+        });
+      }).then(function () {
+        if (sy.err === 'newer') return;
+        sy.last = Date.now(); sy.err = '';
+        if (!sy.email) DRIVE.who().then(function (em) { if (em) { sy.email = em; E.saveState(state); paintSync(); } });
+      });
+    }
+    syncing = attempt().catch(function (err) {
+      sy.err = (err && err.auth) ? 'auth' : (err && err.net) ? 'net' : 'other';
+    }).then(function () {
+      sy.busy = false;
+      E.saveState(state);
+      paintSync();
+      syncing = null;
+      if (syncAgain) { syncAgain = false; return runSync('again'); }
+    });
+    return syncing;
+  }
+  // The reading from Drive, combined with this device's.
+  function syncTakeRemote(data) {
+    var theirs = E.importCode(data.code);
+    if (!theirs) return { changed: false, theirsPrint: null };
+    var theirsPrint = syncPrint(theirs);
+    var before = syncPrint(state);
+    var merged = E.syncMerge(state, theirs);
+    // What belongs to this device stays exactly as it is — the very same
+    // objects, so an open room and a prayer under way are not disturbed.
+    merged.room = state.room; merged.sync = state.sync; merged.dev = state.dev;
+    merged.roomTry = state.roomTry; merged.settings = state.settings;
+    merged.prayRun = state.prayRun; merged.audioRun = state.audioRun;
+    if (merged.nlt && state.nlt) merged.nlt.out = state.nlt.out;
+    var after = syncPrint(merged);
+    if (after === before) return { changed: false, theirsPrint: theirsPrint };
+    state = merged;
+    lwSnap = E.lwwSnap(state);
+    E.saveState(state);
+    return { changed: true, theirsPrint: theirsPrint };
+  }
+  function syncRepaint(why) {
+    renderBadges(); updateDots();
+    var on = document.querySelector('.screen.active');
+    var id = on ? on.id : '';
+    if (id === 'screen-plans') renderPlans();
+    if (id === 'screen-favs') renderFavs();
+    if (id === 'screen-settings') renderSettings();
+    renderSeasonLine();
+    // As the app opens, the reading takes up where the other device stopped.
+    if ((why === 'open' || why === 'resume') && mode !== 'random' && !audioOn) {
+      view = null; current = null; serveNext();
+    }
+  }
+  /* The Secret Place in sync (Decision 238): only when he turns it on, and
+     only ever as the locked copy. Returns what goes into the file. */
+  /* v1.1.6, F1 — the cause. A device with no room had the room switch off,
+     and the switch is only shown where a room exists, so this function
+     returned at its first line and the room in Drive was never even looked
+     at. Now a device with no room notes that a room waits in sync
+     (Decision 255) and Settings offers to bring it, whatever the switch. */
+  function syncRoom(remoteRoom, remoteGone) {
+    var sy = syncState(), L = state.room;
+    var R = remoteRoom ? E.roomBlobRead(remoteRoom) : null;
+    if (R && R.kind !== 'R2') R = null;
+    var waits = (!L && R && remoteGone !== R.id) ? remoteRoom : '';
+    if (waits !== (sy.roomWaits || '')) { sy.roomWaits = waits; setTimeout(roomStatusLine, 0); }
+    if (!sy.room) {
+      if (sy.roomClash) { sy.roomClash = false; setTimeout(roomStatusLine, 0); }
+      return { out: remoteRoom, changed: false };
+    }
+    if (!L) {
+      if (R && remoteGone !== R.id) {
+        // A room from another device arrives as a restored one does: locked,
+        // and opened once from Settings with the word or the spare key.
+        state.room = { door: null, knock: null, sealed: remoteRoom, from: 'sync' };
+        sy.roomWaits = '';
+        E.saveState(state); roomStatusLine(); applyBadgeChoice();
+      }
+      return { out: remoteRoom, changed: false };
+    }
+    if (L.sealed) {
+      var S = E.roomBlobRead(L.sealed);
+      // Decision 263 — a different room, still unopened here: asked, never overwritten.
+      if (R && S && S.kind === 'R2' && S.id !== R.id) { clashFlag(true, remoteRoom); return { out: remoteRoom, changed: false }; }
+      clashFlag(false);
+      if (R && S && S.kind === 'R2' && S.id === R.id && remoteRoom !== L.sealed) { L.sealed = remoteRoom; E.saveState(state); }
+      if (!R && S && S.kind === 'R2') return { out: L.sealed, changed: true };
+      return { out: remoteRoom, changed: false };
+    }
+    if (!E.roomIsLocked(L)) return { out: remoteRoom, changed: false };   // it goes up once it is locked
+    var mine = E.roomBlob(L);
+    if (!R) {
+      if (remoteGone && remoteGone === L.id && ivOf(L.vault) === (L.syncedIv || '')) {
+        // Closed for good on the other device, and nothing new written here since.
+        roomKey = null; state.room = null; E.saveState(state);
+        if (roomOpen) closeRoom();
+        roomStatusLine(); applyBadgeChoice();
+        sy.note = 'The Secret Place was closed for good on your other device, so it is closed here too.';
+        return { out: null, changed: false };
+      }
+      return { out: mine, changed: true, iv: ivOf(L.vault) };
+    }
+    var rIv = ivOf(R.vault), lIv = ivOf(L.vault), sIv = L.syncedIv || '';
+    var remoteMoved = rIv !== sIv, localMoved = lIv !== sIv;
+    /* Decision 263 — neither room is ever overwritten without the reader's
+       say. A different room is one case. The other: this same room was joined
+       with another on a different device and now has another lock (its spare
+       key half differs), while this device has changes of its own — those
+       could not be combined without the other lock's word, so it is asked
+       the same way. */
+    var lockMoved = spareHalf(R.keys) !== (L.syncedSpare !== undefined ? L.syncedSpare : spareHalf(L.keys));
+    if (R.id !== L.id || (lockMoved && rIv !== lIv && (localMoved || roomOpen))) {
+      clashFlag(true, remoteRoom); return { out: remoteRoom, changed: false };
+    }
+    clashFlag(false);
+    if (rIv === lIv) { L.syncedIv = lIv; L.syncedSpare = spareHalf(R.keys); return { out: mine, changed: false }; }
+    if (localMoved && !remoteMoved) return { out: mine, changed: true, iv: lIv };
+    if (roomOpen && roomKey) {
+      // Open right now: combined at once, sealed afresh, and sent up next time.
+      L.incoming = remoteRoom; L.syncedIv = rIv; L.syncedSpare = spareHalf(R.keys);
+      roomTakeIncoming(L).then(function (ch) { if (ch) { roomLastSealed = ''; roomPersist(); } });
+      return { out: remoteRoom, changed: false };
+    }
+    if (remoteMoved && !localMoved) {
+      if (lockMoved) sy.note = 'Your room was joined with another room on your other device. It now opens with the word (or spare key) of the lock kept there. Knock at your verse as before.';
+      L.keys = R.keys; L.vault = R.vault; L.lockVault = R.lockVault;
+      L.rev = R.rev; L.at = R.at; L.locksStale = true; L.syncedIv = rIv; L.syncedSpare = spareHalf(R.keys);
+      E.saveState(state);
+      return { out: remoteRoom, changed: false };
+    }
+    // Both changed while apart. The letters can only be combined with the
+    // letter key, so this waits for the next time the room is opened.
+    L.incoming = remoteRoom; L.syncedIv = rIv; L.syncedSpare = spareHalf(R.keys);
+    E.saveState(state);
+    return { out: remoteRoom, changed: false };
+  }
+
+  function spareHalf(keys) { return (keys && keys.s && keys.s.d) || ''; }
+  function clashFlag(on, blob) {
+    var sy = syncState();
+    if (on && blob) sy.clashBlob = blob;
+    if (!on) sy.clashBlob = '';
+    if (!!sy.roomClash === !!on) return;
+    sy.roomClash = !!on;
+    setTimeout(roomStatusLine, 0);
+  }
+
+  // ---- what the reader sees ----
+  function agoText(ms) {
+    var s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+    if (s < 45) return 'just now';
+    var m = Math.round(s / 60);
+    if (m < 60) return m + (m === 1 ? ' minute ago' : ' minutes ago');
+    var h = Math.round(m / 60);
+    if (h < 24) return h + (h === 1 ? ' hour ago' : ' hours ago');
+    var d = Math.round(h / 24);
+    return d + (d === 1 ? ' day ago' : ' days ago');
+  }
+  var syncAcctShown = false;
+  function paintSync() {
+    var box = $('syncSetting');
+    if (!box || !state) return;
+    var sy = syncState();
+    box.style.display = syncAvailable() ? '' : 'none';
+    if ($('syncInvite')) $('syncInvite').style.display = (syncAvailable() && !sy.on) ? '' : 'none';
+    if (!syncAvailable()) return;
+    $('syncOff').style.display = sy.on ? 'none' : '';
+    $('syncOnBox').style.display = sy.on ? '' : 'none';
+    // v1.1.6, Decision 259 — the account name behind View; tap again hides it.
+    $('syncWho').textContent = 'Sync is on';
+    $('syncView').style.display = sy.email ? '' : 'none';
+    $('syncView').textContent = syncAcctShown ? 'Hide' : 'View';
+    $('syncAcct').textContent = sy.email ? ('Google account: ' + sy.email) : '';
+    $('syncAcct').style.display = (syncAcctShown && sy.email) ? '' : 'none';
+    var line = '';
+    if (sy.busy) line = 'Syncing…';
+    else if (sy.err === 'auth') line = 'Sync is waiting for you to sign in to Google again. Tap Sync now.';
+    else if (sy.err === 'net') line = 'No connection just now. Your reading is safe here, and goes up when the connection is back.';
+    else if (sy.err === 'newer') line = 'The copy in your Drive was made by a newer DrawNigh. Update this one, and sync carries on.';
+    else if (sy.err === 'other') line = 'Google did not answer as expected. Your reading is safe here; sync tries again next time.';
+    else if (sy.last) line = 'Last synced: ' + agoText(sy.last) + '.';
+    else line = 'Not synced yet.';
+    $('syncLast').textContent = line;
+    var hasRoom = !!(state.room && (E.roomIsLocked(state.room) || state.room.sealed));
+    $('syncRoomRow').style.display = hasRoom ? '' : 'none';
+    $('setSyncRoom').checked = !!sy.room;
+    $('syncRoomNote').style.display = (hasRoom && sy.room) ? '' : 'none';
+    var extra = sy.note || '';
+    if (sy.roomClash) extra = (extra ? extra + ' ' : '') + 'Your sync holds another room. Neither room has been changed — choose what to do under The Secret Place.';
+    else if (sy.roomWaits && !state.room) extra = (extra ? extra + ' ' : '') + 'Your room is kept in your sync. You can bring it to this device under The Secret Place.';
+    $('syncNote').textContent = extra;
+  }
+  // Decision 249 — on first open, the offer. "Yes, back it up" is the
+  // highlighted choice; "Not now" leaves it off, and the same offer stays in
+  // Settings. Shown once.
+  function maybeOfferSync() {
+    var sy = syncState();
+    if (!syncAvailable() || sy.on || sy.asked) return;
+    if (document.querySelector('.overlay.show')) return;     // never two at once
+    $('syncAskOverlay').classList.add('show');
+  }
+  function syncTurnOn() {
+    var sy = syncState();
+    sy.asked = true;
+    $('syncAskOverlay').classList.remove('show');
+    var go = function () {
+      sy.turningOn = true; sy.silentFail = 0; E.saveState(state);
+      if (!IS_EXT) { DRIVE.signIn({ silent: false, choose: true }); return; }   // the page leaves for Google
+      $('syncNote').textContent = 'A Google sign-in has opened in a new tab.';
+      DRIVE.signIn({ silent: false, choose: true }).then(syncSignedIn);
+    };
+    if (IS_EXT && !syncAllowed) {
+      // v1.1.6, Decision 258 — the plain line first; its button is the tap
+      // Firefox's own question is asked inside (Decision 243).
+      dcExplain('sync', function (yes) {
+        if (!yes) { $('syncNote').textContent = 'Sync was not turned on. Nothing was changed.'; paintSync(); return; }
+        extAsk(['https://www.googleapis.com/*']).then(function (ok) {
+          if (ok === false) { sy.turningOn = false; $('syncNote').textContent = 'Sync needs Firefox\u2019s permission to reach Google Drive. Nothing was changed.'; paintSync(); return; }
+          syncAllowed = true;
+          go();
+        });
+      });
+      return;
+    }
+    if (IS_EXT) {
+      // Firefox's own question first, inside the same tap (Decision 243).
+      extAsk(['https://www.googleapis.com/*']).then(function (ok) {
+        // null: this Firefox could not ask; the reader's own tap on "Turn on
+        // sync", after the explanation above it, is the consent.
+        if (ok === false) { sy.turningOn = false; $('syncNote').textContent = 'Sync needs Firefox’s permission to reach Google Drive. Nothing was changed.'; paintSync(); return; }
+        go();
+      });
+      return;
+    }
+    go();
+  }
+  function syncSignedIn(r) {
+    var sy = syncState();
+    if (r && r.ok) {
+      if (sy.turningOn) { sy.on = true; sy.dirty = true; sy.dirtyN = (sy.dirtyN || 0) + 1; }
+      sy.turningOn = false; sy.err = ''; sy.silentFail = 0; sy.note = '';
+      E.saveState(state);
+      paintSync();
+      if (sy.after === 'remove') { sy.after = ''; syncRemoveCopy(); return; }
+      runSync('first');
+      return;
+    }
+    var was = sy.turningOn;
+    sy.turningOn = false;
+    if (sy.after === 'remove') { sy.after = ''; $('syncNote').textContent = 'Google did not sign in, so the copy in your Drive was not removed. You can delete it from Google Drive → Settings → Manage apps → DrawNigh.'; }
+    else if (was) $('syncNote').textContent = 'Google did not finish the sign-in, so sync was not turned on. Nothing was changed.';
+    E.saveState(state); paintSync();
+  }
+  // Decision 242 — turning it off offers to remove the Drive copy.
+  function syncTurnOff() {
+    var sy = syncState();
+    sy.on = false; sy.busy = false; sy.dirty = false;
+    E.saveState(state); paintSync();
+    $('syncOffNote').textContent = '';
+    $('syncOffOverlay').classList.add('show');
+  }
+  function syncRemoveCopy() {
+    var sy = syncState();
+    $('syncOffNote').textContent = 'Removing…';
+    DRIVE.hasToken().then(function (has) {
+      if (!has) {
+        if (IS_EXT) return DRIVE.signIn({ silent: true, hint: sy.email || '' }).then(function (r) { return !!(r && r.ok); });
+        // The website must hop to Google first; the removal finishes on return.
+        sy.after = 'remove'; E.saveState(state);
+        DRIVE.signIn({ silent: true, hint: sy.email || '' });
+        return new Promise(function () {});
+      }
+      return true;
+    }).then(function (ok) {
+      if (!ok) throw new Error('auth');
+      return DRIVE.remove(sy.fileId || null);
+    }).then(function () {
+      return DRIVE.forget();
+    }).then(function () {
+      state.sync = { on: false, room: false, asked: true, preview: sy.preview };
+      E.saveState(state);
+      $('syncOffOverlay').classList.remove('show');
+      paintSync();
+      $('syncNote').textContent = 'Removed. DrawNigh has left nothing in your Google Drive.';
+    }, function () {
+      $('syncOffNote').textContent = 'It could not be removed just now. You can delete it any time from Google Drive → Settings → Manage apps → DrawNigh.';
+    });
+  }
+  function syncLeaveCopy() {
+    var sy = syncState();
+    DRIVE.forget();
+    state.sync = { on: false, room: false, asked: true, preview: sy.preview };
+    E.saveState(state);
+    $('syncOffOverlay').classList.remove('show');
+    paintSync();
+    $('syncNote').textContent = 'Sync is off. Your copy stays in your Drive until you remove it.';
+  }
+  // At start: the answer from Google if the website has just come back, then
+  // a first pass, or the offer.
+  function syncBoot(back) {
+    if (!DRIVE) return;
+    var sy = syncState();
+    paintSync();
+    if (back && back.error === 'state') back = null;     // not this device's sign-in: nothing to do
+    if (back && back.ok) { syncSignedIn({ ok: true }); return; }
+    if (back && back.error) {
+      if (back.silent) {
+        sy.silentFail = Date.now(); sy.err = 'auth';
+        if (sy.after === 'remove') { syncSignedIn({ error: back.error }); return; }
+        E.saveState(state); paintSync();
+      } else {
+        syncSignedIn({ error: back.error });
+      }
+      return;
+    }
+    if (syncOn()) runSync('open');
+    else setTimeout(maybeOfferSync, 1500);
+  }
+  var lastResume = 0;
+  function syncWake() {
+    if (!syncOn()) return;
+    var sy = syncState();
+    if (sy.dirty || !sy.last || Date.now() - sy.last > 60000) {
+      if (Date.now() - lastResume < 5000) return;
+      lastResume = Date.now();
+      runSync('resume');
+    }
+  }
+
   function wire() {
     document.querySelectorAll('nav button').forEach(function (b) {
       b.onclick = function () { switchScreen(b.dataset.screen); };
@@ -3633,6 +4976,7 @@
     $('btnFlip').onclick = function (e) {
       e.stopPropagation();                       // the stage behind it moves to the next verse
       flipHold = nltChosen() ? 'kjv' : 'nlt';
+      if (flipHold === 'nlt' && !nltAllowed) nltAskPermission();
       nltSaid = '';
       var r = shownRef();
       if (r && nltWanted() && !nltOutToday()) nltEnsure(r);
@@ -3644,6 +4988,7 @@
     $('btnCompare').onclick = function (e) {
       e.stopPropagation();
       cmpOn = !cmpOn;
+      if (cmpOn && !nltAllowed) nltAskPermission();
       $('btnCompare').classList.toggle('on', cmpOn);
       var r = shownRef();
       if (r && cmpOn && nltWanted() && !nltOutToday()) nltEnsure(r);
@@ -3651,6 +4996,7 @@
     };
     $('setTranslation').onchange = function (e) {
       state.settings.translation = e.target.value;
+      if (e.target.value === 'nlt' && !nltAllowed) nltAskPermission();
       flipHold = null;                           // the setting takes effect at once
       save();
       var r = shownRef();
@@ -3795,6 +5141,7 @@
     $('btnAudioGo').onclick = function (e) { e.stopPropagation(); startAudio(false); };
     $('setAudio').onchange = function (e) {
       state.settings.audio = e.target.checked; save(); audioVisible();
+      if (e.target.checked) { voiceWarm = false; warmVoice(); }   // v1.1.5, Decision 224
     };
     $('setAudioStop').onchange = function (e) { state.settings.audioStop = e.target.checked; save(); };
     $('setAudioNums').onchange = function (e) { state.settings.audioNums = e.target.checked; save(); };
@@ -3832,6 +5179,26 @@
     // The Secret Place
     $('btnRoomMake').onclick = openMake;
     $('btnRoomOpenSealed').onclick = function () { askPin('open'); };
+    // v1.1.6 — Decisions 255, 256, 258, 259, 261, 262, 263.
+    $('btnRoomBring').onclick = roomBring;
+    $('roomBringGo').onclick = function (e) { e.preventDefault(); openBring(); };
+    $('bringSync').onclick = function () { $('bringOverlay').classList.remove('show'); syncTurnOn(); };
+    $('bringSyncNow').onclick = function () { $('bringOverlay').classList.remove('show'); syncState().note = ''; runSync('now'); };
+    $('bringCode').onclick = bringByCode;
+    $('bringNo').onclick = function () { $('bringOverlay').classList.remove('show'); };
+    $('btnRoomForgot').onclick = function () { askPin('forgotKnock'); };
+    $('btnRoomDown').onclick = roomDownAsk;
+    $('btnRoomKeepIt').onclick = function () { askPin('keepIt'); };
+    $('btnClashJoin').onclick = joinStart;
+    $('btnClashApart').onclick = function () {
+      roomAsk('Keep them apart?', 'Room sync stays off on this device. The room in your sync waits there, untouched, on its own devices. This device\u2019s room stays as it is.', 'Keep them apart', function () { askClose(); keepApart(); });
+    };
+    $('joinMine').onclick = function () { joinFinish(true); };
+    $('joinTheirs').onclick = function () { joinFinish(false); };
+    $('joinNo').onclick = joinCancel;
+    $('dcGo').onclick = function () { $('dcOverlay').classList.remove('show'); var t = dcThen; dcThen = null; if (t) t(true); };
+    $('dcNo').onclick = function () { $('dcOverlay').classList.remove('show'); var t = dcThen; dcThen = null; if (t) t(false); };
+    $('syncView').onclick = function () { syncAcctShown = !syncAcctShown; paintSync(); };
     /* v1.1.3, Decision 143 — F29. Close no longer walks a man out of his own
        room on one tap. Nothing inside is lost by leaving, but getting back in
        costs the verse, the knock and the word again, and that is enough to be
@@ -3848,9 +5215,11 @@
     };
     $('roomHeadBack').onclick = function () { renderRoomList(); };
     // v1.1.3, Decision 140 — the full category list, on both filing screens.
-    $('mkCatBrowse').onclick = function () { toggleCatPicker('mkCatPicker', 'mkCat'); };
     $('foCatBrowse').onclick = function () { toggleCatPicker('foCatPicker', 'foCat'); };
-    $('pinCancel').onclick = function () { $('pinOverlay').classList.remove('show'); };
+    $('pinCancel').onclick = function () {
+      $('pinOverlay').classList.remove('show');
+      if (pinFor === 'joinMine' || pinFor === 'joinTheirs') join = null;   // nothing has changed
+    };
     $('pinGo').onclick = function () { pinEntered($('pinBox').value); };
     $('pinBox').onkeydown = function (e) { if (e.key === 'Enter') pinEntered($('pinBox').value); };
     // v1.1.2, Decision 132 — the ticks live on the writing page itself now.
@@ -3863,7 +5232,9 @@
        a category named, or the prompt turned off for good) the choice has already
        been made explicitly and the letter is written here, as before. */
     function writeDraft(d) {
-      var e = E.roomAddEntry(state.room, d.text);
+      var e = E.roomAddEntry(state.room, d.text, null, devMark());
+      // v1.1.5, Decision 223 — the title typed at the top of the blank letter.
+      e.title = String(d.title || '').trim().slice(0, 140);
       e.struggle = !!d.struggle;
       e.testimony = !!d.testimony;
       e.cats = d.cat ? [d.cat] : [];
@@ -3872,25 +5243,15 @@
       // Only now is the writing page cleared — anything earlier and a man who
       // changed his mind would have lost the words he came in with.
       $('roomBox').value = '';
-      $('mkStruggle').checked = false; $('mkTestimony').checked = false; $('mkCat').value = '';
+      if ($('roomTitle')) $('roomTitle').value = '';
       return e;
     }
     $('roomKeep').onclick = function () {
       var t = $('roomBox').value;
       if (!t.trim()) { renderRoomList(); return; }
-      var d = {
-        text: t,
-        struggle: $('mkStruggle').checked,
-        testimony: $('mkTestimony').checked,
-        cat: $('mkCat').value.trim()
-      };
-      if (!d.struggle && !d.testimony && !d.cat && !state.settings.roomFilePromptOff) {
-        fileDraft = d;
-        openFileOverlay({ struggle: false, testimony: false, cats: [] }, 'auto');
-        return;
-      }
-      writeDraft(d);
-      renderRoomList();
+      // v1.1.6, Decisions 253 + 254 — always the filing box, every time.
+      fileDraft = { text: t, title: $('roomTitle') ? $('roomTitle').value : '' };
+      openFileOverlay({ struggle: false, testimony: false, cats: [] }, 'auto');
     };
     $('roomToList').onclick = renderRoomList;
     $('foDone').onclick = function () {
@@ -3900,7 +5261,6 @@
         fileDraft.struggle = $('foStruggle').checked;
         fileDraft.testimony = $('foTestimony').checked;
         fileDraft.cat = c;
-        if ($('foDontAsk').checked) state.settings.roomFilePromptOff = true;
         writeDraft(fileDraft);
         fileDraft = null;
       } else if (fileTarget) {
@@ -3929,7 +5289,8 @@
       renderRoomList();
     };
     $('roomNew').onclick = function () {
-      $('roomBox').value = ''; $('mkCatPicker').style.display = 'none';
+      $('roomBox').value = '';
+      if ($('roomTitle')) $('roomTitle').value = '';
       fillCatList(); roomShow('roomWrite');
     };
     $('roomSettingsBtn').onclick = renderRoomAdmin;
@@ -3948,7 +5309,18 @@
       save(); renderRemindLine();
     };
     $('roomBadgeChoice').onchange = function (e) {
-      state.room.badgeChoice = e.target.value; save(); applyBadgeChoice();
+      state.room.badgeChoice = e.target.value; state.room.badgeChosen = true;
+      save(); applyBadgeChoice();
+    };
+    /* v1.1.5, Decision 236 — capitals in the word. Flipping it asks for the
+       word, because the lock is rebuilt around it. */
+    if ($('roomWordCase')) $('roomWordCase').onchange = function (e) {
+      caseWanted = (e.target.value === 'exact') ? 'exact' : 'any';
+      $('roomCaseNote').textContent = '';
+      askPin('case');
+      $('pinNote').textContent = (caseWanted === 'exact')
+        ? 'Type your word exactly as you will type it from now on — capitals and all.'
+        : 'Type your word once more.';
     };
     // v1.1.2, F15 (Decision 126) — the last three of the six things §6/§14
     // name as changed from inside only.
@@ -3971,7 +5343,7 @@
           roomAsk('Once more, because there is no way back.',
             'Every letter, every category, the door verse and the knock. Gone, and not recoverable by anyone.',
             'Delete this room',
-            function () { state.room = null; save(); closeRoom(); roomStatusLine(); });
+            function () { roomKey = null; roomSnap = null; state.room = null; save(); closeRoom(); roomStatusLine(); syncNote('room'); });
         });
     };
     // v1.1.4, Decisions 144, 151, 157, 171 — the new screens.
@@ -3991,11 +5363,22 @@
     $('restoredKeep').onclick = function () {
       $('restoredOverlay').classList.remove('show');
       openRoom();
+      if (restoredSpare) { restoredSpare = false; afterSpare(); }
     };
     $('restoredSet').onclick = function () {
       $('restoredOverlay').classList.remove('show');
+      restoredSpare = false;
       openRoom();
       openEdit('all');
+    };
+    // v1.1.5, Decision 235 — the spare key is shown once; the tick releases Go in.
+    $('spareWrote').onchange = function () { $('spareDone').disabled = !$('spareWrote').checked; };
+    $('spareDone').onclick = function () {
+      if (!$('spareWrote').checked) return;
+      $('spareOverlay').classList.remove('show');
+      $('spareWords').textContent = '';
+      var go = spareAfter; spareAfter = null;
+      if (go) go();
     };
     // v1.1.4, Decision 150 — the backup door's own box.
     $('bkGo').onclick = bkSubmit;
@@ -4071,6 +5454,7 @@
       // never written, so cancelling leaves the room exactly as it stands.
       editMode = null; pendingRoom = null; editDoorPending = null;
       padReset(); $('makeOverlay').classList.remove('show');
+      makeClosedOutside();                                  // v1.1.6
     };
     // v1.1.4, Decision 165 — the tick releases the button. Nothing else.
     $('mkWrote').onchange = function () {
@@ -4084,6 +5468,9 @@
       if (editMode && makeStep === 4) {
         editMode = null; editDoorPending = null;
         $('makeOverlay').classList.remove('show');
+        // v1.1.6, Decision 261 — in by the spare key: a new word next (Decision 235).
+        if (forgotFlow && forgotSpare) { forgotFlow = false; forgotSpare = false; afterSpare(); return; }
+        makeClosedOutside();
         return;
       }
       /* v1.1.4, Decision 158 — all three, in one pass. The making flow's own
@@ -4122,11 +5509,12 @@
           return;
         }
         $('makeNote').textContent = 'Saving…';
-        E.sealRoom({ door: makeDoor, knock: makeKnock, made: state.room.made, entries: [], cats: [], seq: 0 }, aa)
-          .then(function (blob) {
+        // v1.1.5 — the word re-seals the letter key; the letters are untouched.
+        relockWord(aa)
+          .then(function () {
+            spareEntry = false;
             state.room.door = makeDoor;
             state.room.knock = makeKnock;
-            state.room.pinCheck = blob;
             state.room.wordShape = settleWordShape($('mkWordShape').value, aa, makeDoor);
             state.room.showWords = ($('mkShowWords').value !== 'no');
             state.room.hint = String($('mkHint').value || '').slice(0, 140);
@@ -4182,10 +5570,9 @@
           return;
         }
         $('makeNote').textContent = 'Saving…';
-        E.sealRoom({ door: editDoorPending, knock: state.room.knock, made: state.room.made, entries: [], cats: [], seq: 0 }, da)
-          .then(function (blob) {
+        relockWord(da)
+          .then(function () {
             state.room.door = editDoorPending;
-            state.room.pinCheck = blob;
             // v1.1.4, Decision 152 — quietly filed as typed if it is not in the verse.
             state.room.wordShape = settleWordShape($('mkWordShape').value, da, editDoorPending);
             state.room.showWords = ($('mkShowWords').value !== 'no');
@@ -4206,6 +5593,7 @@
         var ecodes = E.knockCheck(newKnock);
         if (ecodes.indexOf('short') >= 0 || ecodes.indexOf('long') >= 0) { paintKnockWarn(); return; }
         state.room.knock = newKnock; save();
+        if (forgotFlow && roomKey) roomPersist();          // v1.1.6, Decision 261 — sealed into the locks
         showEditReveal('knock', newKnock);
         return;
       }
@@ -4213,14 +5601,14 @@
         var ea = $('mkPin').value, eb = $('mkPin2').value;
         if (!ea) { $('makeNote').textContent = 'A word is needed. There is no way in without one.'; return; }
         if (ea !== eb) { $('makeNote').textContent = 'Those two do not match.'; return; }
-        if (ea === state.room.knock.gaps.join('') && !$('makeNote').textContent) {
+        if (ea === state.room.knock.gaps.join('') && $('makeNote').textContent.indexOf('That word is your knock') < 0) {
           $('makeNote').textContent = 'That word is your knock. Anyone who works out the tapping is then straight in, and anyone holding an old backup code of yours needs only the rhythm. Press again to use it anyway.';
           return;
         }
         $('makeNote').textContent = 'Saving…';
-        E.sealRoom({ door: state.room.door, knock: state.room.knock, made: state.room.made, entries: [], cats: [], seq: 0 }, ea)
-          .then(function (blob) {
-            state.room.pinCheck = blob;
+        relockWord(ea)
+          .then(function () {
+            spareEntry = false;
             // v1.1.4, Decision 152 — quietly filed as typed if it is not in the verse.
             state.room.wordShape = settleWordShape($('mkWordShape').value, ea, state.room.door);
             state.room.showWords = ($('mkShowWords').value !== 'no');
@@ -4276,32 +5664,38 @@
         room.showWords = ($('mkShowWords').value !== 'no');
         room.hint = String($('mkHint').value || '').slice(0, 140);
         $('makeNote').textContent = 'Making it…';
-        // The word itself is never stored. What is kept is a sealed scrap only
-        // the right word can open — the same lock the travelling room uses.
+        // The word itself is never stored. v1.1.5 (Decisions 234, 235): the
+        // room is locked from its first moment — a letter key sealed under the
+        // word and under a spare key, which is shown once, on the next screen.
         // v1.1.2, Decision 127 — NOT written to state.room here any more. The
         // room lives in pendingRoom until "I have it" is pressed at the
         // reveal, so the reveal is a confirmation, not a receipt.
-        E.sealRoom({ door: makeDoor, knock: makeKnock, made: room.made, entries: [], cats: [], seq: 0 }, a)
-          .then(function (blob) {
-            room.pinCheck = blob;
-            pendingRoom = room;
-            showReveal(room);
-          }, function () {
-            $('makeNote').textContent = 'This browser would not seal the room. Nothing was made.';
-          });
+        E.vaultCreate(a, 'any').then(function (v) {
+          room.keys = v.keys; room.id = randomMark(10); room.gone = {};
+          return Promise.all([E.vaultSeal(v.dek, E.roomContents(room)), E.vaultSeal(v.dek, E.roomLocks(room))])
+            .then(function (b) {
+              room.vault = b[0]; room.lockVault = b[1];
+              room.rev = 1; room.at = Date.now(); room.syncedRev = 0;
+              pendingRoom = room; pendingSpare = v.spare;
+              showReveal(room);
+            });
+        }).catch(function () {
+          $('makeNote').textContent = 'This browser would not seal the room. Nothing was made.';
+        });
         return;
       }
       if (makeStep === 4) {
         // v1.1.4, Decision 165 — the tick is the gate, not a decoration. The
         // button is disabled until it is marked; this is the belt to that brace.
         if (!$('mkWrote').checked) {
-          $('mkWroteNote').textContent = 'Mark that you have written them down. The word cannot be recovered by anyone — not the app, not anyone.';
+          $('mkWroteNote').textContent = 'Mark that you have written them down. Your spare key is shown only now, and nobody can recover the word or the spare key for you.';
           return;
         }
         // The reveal has been read. Only now does the room exist.
         if (pendingRoom) {
-          state.room = pendingRoom; pendingRoom = null; state.roomTry = null; save();
+          state.room = pendingRoom; pendingRoom = null; pendingSpare = null; state.roomTry = null; save();
           roomStatusLine();
+          syncNote('room');
         }
         /* v1.1.4, Decision 164 — the reminder becomes a step at the end of the
            making, offered with §12's own reasoning and skippable. It lives in
@@ -4372,7 +5766,7 @@
     // forbids that) — it is destroying a draft, not disclosing it, at the one
     // screen where the man has already been told everything.
     $('makeStartAgain').onclick = function () {
-      pendingRoom = null;
+      pendingRoom = null; pendingSpare = null;
       openMake();
     };
 
@@ -4396,7 +5790,7 @@
          in a chat. A reader has no chat to look in. */
       $('mkWroteRow').style.display = '';
       $('mkWrote').checked = false;
-      $('mkWroteNote').textContent = 'The word cannot be recovered by anyone. Write these down before you go on.';
+      $('mkWroteNote').textContent = 'Nobody can recover these for you. Write them down before you go on — the spare key most of all.';
       $('makeNext').disabled = true;
       var el = $('mkReveal');
       while (el.firstChild) el.removeChild(el.firstChild);
@@ -4411,11 +5805,14 @@
       row('Counting starts', room.knock.start === 'pause' ? 'after your first pause' : 'when the prayer starts');
       row('You may be out by', room.knock.tol + (room.knock.tol === 1 ? ' second' : ' seconds'));
       row('Then let it run', E.KNOCK_SETTLE + ' seconds, without pausing');
+      // v1.1.5, Decision 235 — the spare key, shown here once and never again.
+      if (pendingSpare) row('Your spare key', pendingSpare.split(' ').join(' · '));
       var n = document.createElement('div'); n.className = 'reveal-note';
       n.textContent = 'Go to your verse, start a prayer, and pause the clock at each of those seconds in turn. '
         + 'When the last one is done, resume and simply pray — after ' + E.KNOCK_SETTLE
         + ' unbroken seconds the word panel appears. Do not tap again while you wait: a man tapping his way in never stops, '
-        + 'and that is exactly what keeps him out. Nothing here will ever be shown to you again.';
+        + 'and that is exactly what keeps him out. Nothing here will ever be shown to you again.'
+        + (pendingSpare ? ' If you ever forget your word, type the eight words of the spare key into the word box at your door instead. DrawNigh keeps no copy of them anywhere.' : '');
       el.appendChild(n);
     }
     // v1.1.2, Decision 126 — the smaller reveal for changing one existing
@@ -4463,9 +5860,9 @@
         row('Counting starts', value.knock.start === 'pause' ? 'after your first pause' : 'when the prayer starts');
         row('You may be out by', value.knock.tol + (value.knock.tol === 1 ? ' second' : ' seconds'));
         row('Then let it run', E.KNOCK_SETTLE + ' seconds, without pausing');
-        note = 'All three have changed, together. This is read back once, exactly as at the making, and will not be shown again. Your letters are unaffected — they open with the new word from now on. Write these down before you leave this screen: the word cannot be recovered by anyone.';
+        note = 'All three have changed, together. This is read back once, exactly as at the making, and will not be shown again. Your letters are unaffected — they open with the new word from now on, and your spare key goes on working. Write these down before you leave this screen.';
       } else {
-        note = 'Your word has changed. Existing letters are unaffected — they open with the new word from now on. Nothing here will ever be shown to you again.';
+        note = 'Your word has changed. Existing letters are unaffected — they open with the new word from now on, and your spare key goes on working. Nothing here will ever be shown to you again.';
       }
       var n = document.createElement('div'); n.className = 'reveal-note';
       n.textContent = note;
@@ -4527,6 +5924,56 @@
 
     /* v1.0.9, item 10 — the hidden ladder test mode. Seven taps on the James
        4:8 line. Hidden because it is a builder's tool, not a reader's. */
+    /* v1.1.5, Decision 245 — sync, opened on this one device for testing while
+       Google's approval is under review. Seven taps on the version line, the
+       same way the ladder's test mode is reached. Seven more close it again. */
+    var syncTaps = 0;
+    $('aboutVersion').onclick = function () {
+      if (++syncTaps < 7) return;
+      syncTaps = 0;
+      var sy = syncState();
+      if (SYNC_OPEN) return;
+      sy.preview = !sy.preview;
+      if (!sy.preview && sy.on) { sy.on = false; }
+      E.saveState(state);
+      paintSync();
+      toastVerse(sy.preview ? 'Sync is open on this device, for testing.' : 'Sync is closed again on this device.', 'Sync');
+      if (sy.preview) $('syncSetting').scrollIntoView({ block: 'nearest' });
+      roomStatusLine();          // v1.1.6 — Decision 256's two routes follow sync
+    };
+    // v1.1.5 — everything sync answers to.
+    $('btnSyncOn').onclick = syncTurnOn;
+    $('syncAskYes').onclick = syncTurnOn;
+    $('syncAskNo').onclick = function () {
+      syncState().asked = true; E.saveState(state);
+      $('syncAskOverlay').classList.remove('show');
+    };
+    $('btnSyncNow').onclick = function () { syncState().note = ''; runSync('now'); };
+    $('btnSyncOff').onclick = syncTurnOff;
+    $('syncOffRemove').onclick = syncRemoveCopy;
+    $('syncOffLeave').onclick = syncLeaveCopy;
+    $('setSyncRoom').onchange = function (e) {
+      var sy = syncState();
+      sy.room = !!e.target.checked;
+      sy.dirty = true; sy.dirtyN = (sy.dirtyN || 0) + 1;
+      E.saveState(state); paintSync();
+      if (sy.room) runSync('room');
+    };
+    if ($('syncInviteGo')) $('syncInviteGo').onclick = function (e) {
+      e.preventDefault();
+      $('syncSetting').scrollIntoView({ block: 'start', behavior: 'smooth' });
+    };
+    document.addEventListener('visibilitychange', function () {
+      if (!state || !syncOn()) return;
+      if (document.hidden) { if (syncState().dirty) runSync('leave'); }
+      else syncWake();
+    });
+    window.addEventListener('online', function () { if (state && syncOn() && syncState().dirty) runSync('online'); });
+    // v1.1.5, Decision 224 — the voice is woken by the first touch.
+    document.addEventListener('pointerdown', warmVoice, true);
+    // v1.1.5, Decision 225 — a picture of a square, where the camera will not open.
+    if ($('scanFile')) $('scanFile').onclick = scanPicture;
+
     var revealTaps = 0;
     $('aboutVerse').onclick = function () {
       if (++revealTaps < 7) return;
@@ -4582,8 +6029,8 @@
 
     /* WEB BUILD — Quick access. The ⋮ menu's two items, wired to the very same
        functions the menu calls, so nothing can drift between the two paths. */
-    $('setBadges').onclick = function () { openBadges(); };
-    $('setCatchUp').onclick = function () { openCatchUp(state.activePlanId); };
+    if ($('setBadges')) $('setBadges').onclick = function () { openBadges(); };
+    if ($('setCatchUp')) $('setCatchUp').onclick = function () { openCatchUp(state.activePlanId); };
 
     // Backup
     $('btnCopyBackup').onclick = function () {
@@ -4681,7 +6128,7 @@
     $('btnMerge').onclick = function () {
       var st = readCode(); if (!st) return;
       var sBefore = state.streak.days;
-      state = E.mergeStates(state, st); save();
+      state = E.mergeStates(state, st); lwSnap = null; save();
       $('backupNote').textContent = 'Merged. Nothing was lost — verses read on either device now count as read' +
         (state.streak.days > sBefore ? ', and your streak is now ' + state.streak.days + ' days' : '') + '.';
       renderBadges(); renderSettings();
@@ -4706,7 +6153,9 @@
          day is neither today nor yesterday, and it runs on every load. Ask
          afterwards and there is nothing left to ask about. */
       var info = E.gapInfo(st, null);
-      state = st; save();
+      // v1.1.5 — a restore is not a change of mind: nothing is stamped as
+      // removed or added by it, so sync cannot carry it to other devices as one.
+      state = st; lwSnap = null; save();
       $('backupNote').textContent = 'Progress restored. Welcome back.';
       renderBadges(); renderSettings();
       /* v1.1.3, F26 — reported by Dickson: after a Replace, "Make a room" did
@@ -4784,10 +6233,31 @@
     };
   }
 
+  /* Build tests only: on this computer's own address (never on the real
+     website, never in the add-on) the test suite can reach a few of the app's
+     own functions. Nothing here exists for a reader. */
+  try {
+    if (!IS_EXT && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) {
+      self.DN_TEST = {
+        state: function () { return state; }, askPin: function (w) { askPin(w); },
+        openRoom: function () { openRoom(); }, closeRoom: function () { closeRoom(); },
+        runSync: function (w) { return runSync(w || 'now'); }, save: function () { save(); },
+        roomKeyHeld: function () { return !!roomKey; }, backupCode: backupCode,
+        serveNext: function () { view = null; current = null; serveNext(); }
+      };
+    }
+  } catch (e) {}
+
   // ---------- Start ----------
+  /* v1.1.5 — if the website has just come back from Google, the answer is in
+     the address; it is read (and cleared from the address) before anything
+     else looks at it. The add-on asks Firefox what it has been allowed. */
+  if (DRIVE) DRIVE.configure(IS_EXT);
+  var authBack = DRIVE ? DRIVE.takeRedirect() : Promise.resolve(null);
   Promise.all([
     fetch('bible.json').then(function (r) { return r.json(); }),
-    fetch('notes.json').then(function (r) { return r.json(); }).catch(function () { return {}; })
+    fetch('notes.json').then(function (r) { return r.json(); }).catch(function () { return {}; }),
+    extPermsInit()
   ]).then(function (both) {
     BIBLE = both[0];
     NOTES = both[1];
@@ -4815,6 +6285,7 @@
       // deep links from popup/content: #plans etc.
       var h = location.hash.replace('#', '');
       if (['books', 'plans', 'favs', 'settings'].indexOf(h) >= 0) switchScreen(h);
+      authBack.then(syncBoot, function () { syncBoot(null); });   // v1.1.5
     });
   });
 })();
