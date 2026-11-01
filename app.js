@@ -3794,7 +3794,7 @@
      two web uploads both called themselves "Web 1.1.4 (NLT)" and nobody could
      tell which was live). The add-on reads its own manifest; the website
      carries its label here, with the word Web to tell them apart. */
-  var WEB_VERSION = 'Web 1.1.6';
+  var WEB_VERSION = 'Web 1.1.7';
   function extVersion() {
     if (!IS_EXT) return WEB_VERSION;
     try { return 'Version ' + ((XAPI && XAPI.runtime.getManifest().version) || ''); } catch (e) { return ''; }
@@ -4498,7 +4498,9 @@
      from every reader until it arrives. SYNC_OPEN becomes true in the small
      update that follows the approval. Until then it can be opened on a single
      device for testing: tap the version line under About seven times. */
-  var SYNC_OPEN = false;
+  /* v1.1.7 — Google approved DrawNigh's sign-in (31 Oct 2026). Sync is open
+     to every reader. */
+  var SYNC_OPEN = true;
   var DRIVE = self.DrawNighDrive || null;
   function syncState() {
     if (!state.sync) state.sync = { on: false, room: false, asked: false };
@@ -4809,10 +4811,17 @@
   // Decision 249 — on first open, the offer. "Yes, back it up" is the
   // highlighted choice; "Not now" leaves it off, and the same offer stays in
   // Settings. Shown once.
+  var offerTries = 0;
   function maybeOfferSync() {
     var sy = syncState();
     if (!syncAvailable() || sy.on || sy.asked) return;
-    if (document.querySelector('.overlay.show')) return;     // never two at once
+    /* never two at once. v1.1.7 — found when sync opened: a new reader's first
+       open always has another box up (the setup, the verse of the day), so the
+       offer was skipped for good. It now waits for that box to close. */
+    if (document.querySelector('.overlay.show')) {
+      if (++offerTries < 150) setTimeout(maybeOfferSync, 2000);
+      return;
+    }
     $('syncAskOverlay').classList.add('show');
   }
   function syncTurnOn() {

@@ -36,7 +36,11 @@
     authUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
     api: 'https://www.googleapis.com',
     revoke: 'https://oauth2.googleapis.com/revoke',
-    handback: 'https://dicksonohere.github.io/drawnigh/handback.html',
+    /* v1.1.7, Decision 273 — the hand-back page moved off the DrawNigh website.
+       On Android, a DrawNigh icon added to the Home Screen claims every address
+       under /drawnigh/, so the sign-in opened in that icon instead of Firefox
+       and never reached the add-on. This address belongs to no installed app. */
+    handback: 'https://counselofgod.org/drawnigh-signin.html',
     file: 'drawnigh-sync.json',
     waitSilent: 25000,          // a sign-in nobody sees is given this long
     waitAsk: 10 * 60 * 1000     // a sign-in the reader is doing himself, this long
