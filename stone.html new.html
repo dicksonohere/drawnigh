@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#f6efe1">
+<title>One More Stone</title>
+<style>
+  :root {
+    --bg: #f6efe1; --card: #fffaf0; --ink: #2b2418; --soft: #6b5d45;
+    --line: #e2d6bd; --gold: #8a6d3b; --gold2: #b08d4f; --ok: #2f7a3e;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); }
+  body { font-family: Georgia, "Times New Roman", serif; line-height: 1.45; padding: 18px 16px 40px; max-width: 480px; margin: 0 auto; }
+  .motto { text-align: center; font-size: 11px; letter-spacing: .18em; color: var(--soft); margin-bottom: 4px; }
+  h1 { text-align: center; font-size: 24px; margin: 0 0 16px; font-weight: normal; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-bottom: 14px; }
+  .label { font-size: 12px; letter-spacing: .12em; color: var(--soft); text-transform: uppercase; margin-bottom: 6px; }
+  .big { font-size: 22px; }
+  .small { font-size: 14px; color: var(--soft); }
+  .bar { height: 10px; background: #efe5d0; border-radius: 6px; overflow: hidden; margin: 10px 0 8px; }
+  .bar > div { height: 100%; width: 0; background: linear-gradient(90deg, var(--gold2), var(--gold)); transition: width .4s; }
+  .nudge { text-align: center; font-style: italic; color: var(--gold); margin-top: 6px; font-size: 17px; }
+  .nudge.kept { color: var(--ok); font-style: normal; }
+  .stone-btn { display: block; width: 100%; font-family: inherit; font-size: 21px; padding: 18px 12px; border-radius: 14px; border: none; background: var(--gold); color: #fff; margin: 4px 0 12px; }
+  .stone-btn:active { background: #74592e; }
+  .row { display: flex; gap: 8px; }
+  .row button { flex: 1; font-family: inherit; font-size: 16px; padding: 12px 6px; border-radius: 10px; border: 1px solid var(--gold); background: #fff; color: var(--gold); }
+  .row button:active { background: #f1e7d3; }
+  .years div { display: flex; justify-content: space-between; font-size: 14px; padding: 4px 0; border-bottom: 1px dashed var(--line); }
+  .foot { text-align: center; font-size: 13px; color: var(--soft); margin-top: 18px; }
+
+  #veil { position: fixed; inset: 0; background: rgba(20,16,10,.94); color: #f6efe1; display: none; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 24px; z-index: 10; }
+  #veil.on { display: flex; }
+  #veil .pray { font-size: 15px; letter-spacing: .2em; opacity: .75; }
+  #veil .count { font-size: 64px; margin: 10px 0 6px; font-variant-numeric: tabular-nums; }
+  #veil .verse { font-style: italic; opacity: .8; max-width: 320px; font-size: 15px; }
+  #veil button { margin-top: 30px; font-family: inherit; font-size: 15px; background: transparent; color: #f6efe1; border: 1px solid rgba(246,239,225,.5); border-radius: 999px; padding: 10px 22px; }
+</style>
+</head>
+<body>
+
+<div class="motto">PRESENCE OVER PERFORMANCE</div>
+<h1>One More Stone</h1>
+
+<div class="card">
+  <div class="label">Today</div>
+  <div class="big" id="todayStones">0 Stones</div>
+  <div class="small" id="todayTime">0 seconds</div>
+  <div class="bar"><div id="fill"></div></div>
+  <div class="small">Today's target: <b id="target">1 Stone</b> <span id="targetTime"></span></div>
+  <div class="small">Goal for everyone: <b>2 Boulders · 24 Rocks</b> (2 hr 24 min)</div>
+  <div class="nudge" id="nudge">One more stone.</div>
+</div>
+
+<button class="stone-btn" id="oneMore">One more stone 🙏</button>
+
+<div class="card">
+  <div class="label">Pray longer</div>
+  <div class="row">
+    <button data-mins="1">1 min</button>
+    <button data-mins="2">2 min</button>
+    <button data-mins="5">5 min</button>
+    <button data-mins="60">1 hr</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="label">Your bag this year</div>
+  <div class="big" id="bag">0 Stones</div>
+  <div class="small" id="bagTime"></div>
+  <div class="years" id="years"></div>
+</div>
+
+<div class="foot">5 seconds = 1 stone · 12 stones = 1 rock · 60 rocks = 1 boulder · 24 boulders = 1 hill · 10 hills = 1 mountain</div>
+
+<div id="veil">
+  <div class="pray">PRAY</div>
+  <div class="count" id="count">5</div>
+  <div class="verse">“Draw nigh to God, and he will draw nigh to you.” James 4:8</div>
+  <button id="stop">✕ Stop</button>
+</div>
+
+<script>
+(function () {
+  var KEY = 'dnOneMoreStone';
+  var FULL = 8640;
+  var s;
+
+  function load() {
+    try { s = JSON.parse(localStorage.getItem(KEY)); } catch (e) { s = null; }
+    if (!s) { s = { target: 5, days: {}, years: {}, lastDay: '' }; }
+  }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) {} }
+
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function dayKey(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+
+  function rollover() {
+    var today = dayKey(new Date());
+    if (s.lastDay && s.lastDay !== today) {
+      var prev = s.days[s.lastDay] || 0;
+      if (prev >= s.target) { s.target = Math.min(FULL, s.target + 5); }
+    }
+    s.lastDay = today;
+  }
+
+  function merged(secs) {
+    var st = Math.floor(secs / 5);
+    if (st === 0) { return '0 Stones'; }
+    var parts = [];
+    var mountains = Math.floor(st / 172800); st -= mountains * 172800;
+    var hills = Math.floor(st / 17280); st -= hills * 17280;
+    var boulders = Math.floor(st / 720); st -= boulders * 720;
+    var rocks = Math.floor(st / 12); st -= rocks * 12;
+    function add(n, one, many) { if (n) { parts.push(n + ' ' + (n === 1 ? one : many)); } }
+    add(mountains, 'Mountain', 'Mountains');
+    add(hills, 'Hill', 'Hills');
+    add(boulders, 'Boulder', 'Boulders');
+    add(rocks, 'Rock', 'Rocks');
+    add(st, 'Stone', 'Stones');
+    return parts.join(' · ');
+  }
+  function timeText(secs) {
+    var h = Math.floor(secs / 3600), m = Math.floor(secs % 3600 / 60), x = secs % 60;
+    var out = [];
+    if (h) { out.push(h + ' hr'); }
+    if (m) { out.push(m + ' min'); }
+    if (x || !out.length) { out.push(x + ' sec'); }
+    return out.join(' ');
+  }
+
+  function credit(secs) {
+    if (secs <= 0) { return; }
+    rollover();
+    var today = s.lastDay;
+    var year = today.slice(0, 4);
+    s.days[today] = (s.days[today] || 0) + secs;
+    s.years[year] = (s.years[year] || 0) + secs;
+    save();
+    paint();
+  }
+
+  function paint() {
+    rollover();
+    var today = s.days[s.lastDay] || 0;
+    var year = s.lastDay.slice(0, 4);
+    document.getElementById('todayStones').textContent = merged(today);
+    document.getElementById('todayTime').textContent = timeText(today);
+    document.getElementById('target').textContent = merged(s.target);
+    document.getElementById('targetTime').textContent = '(' + timeText(s.target) + ')';
+    document.getElementById('fill').style.width = Math.min(100, today / s.target * 100) + '%';
+    var n = document.getElementById('nudge');
+    if (today < s.target) {
+      n.textContent = 'One more stone.';
+      n.className = 'nudge';
+    } else if (today > FULL) {
+      n.textContent = 'Tithe kept ✓ · Freewill offering: ' + timeText(today - FULL);
+      n.className = 'nudge kept';
+    } else {
+      n.textContent = 'Tithe kept ✓';
+      n.className = 'nudge kept';
+    }
+    var ys = s.years[year] || 0;
+    document.getElementById('bag').textContent = merged(ys);
+    document.getElementById('bagTime').textContent = timeText(ys) + ' with God in ' + year;
+    var list = document.getElementById('years');
+    list.innerHTML = '';
+    Object.keys(s.years).sort().reverse().forEach(function (y) {
+      if (y === year) { return; }
+      var row = document.createElement('div');
+      row.innerHTML = '<span>' + y + '</span><span>' + merged(s.years[y]) + '</span>';
+      list.appendChild(row);
+    });
+    save();
+  }
+
+  // Soft chime
+  var ac = null;
+  function prime() {
+    try {
+      if (!ac) { ac = new (window.AudioContext || window.webkitAudioContext)(); }
+      if (ac.state === 'suspended') { ac.resume(); }
+    } catch (e) {}
+  }
+  function tone(freq, at) {
+    var o = ac.createOscillator(), g = ac.createGain();
+    o.type = 'sine'; o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(0.18, at + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + 1.1);
+    o.connect(g); g.connect(ac.destination);
+    o.start(at); o.stop(at + 1.2);
+  }
+  function chime() {
+    if (!ac) { return; }
+    try { var t = ac.currentTime; tone(880, t); tone(1318.5, t + 0.22); } catch (e) {}
+  }
+
+  // Prayer timer — counts real time only, never more than chosen
+  var running = null, tick = null, lock = null;
+  function startPrayer(secs) {
+    if (running) { return; }
+    prime();
+    running = { start: Date.now(), dur: secs };
+    document.getElementById('veil').className = 'on';
+    try { if (navigator.wakeLock) { navigator.wakeLock.request('screen').then(function (l) { lock = l; }, function () {}); } } catch (e) {}
+    show();
+    tick = setInterval(show, 250);
+  }
+  function show() {
+    var left = running.dur - (Date.now() - running.start) / 1000;
+    if (left <= 0) { finish(true); return; }
+    var c = Math.ceil(left);
+    document.getElementById('count').textContent = c >= 60 ? Math.floor(c / 60) + ':' + pad(c % 60) : String(c);
+  }
+  function finish(done) {
+    if (!running) { return; }
+    clearInterval(tick);
+    var given = done ? running.dur : Math.min(running.dur, Math.floor((Date.now() - running.start) / 1000));
+    running = null;
+    document.getElementById('veil').className = '';
+    try { if (lock) { lock.release(); lock = null; } } catch (e) {}
+    if (done) { chime(); }
+    credit(given);
+  }
+
+  document.getElementById('oneMore').onclick = function () { startPrayer(5); };
+  var btns = document.querySelectorAll('[data-mins]');
+  for (var i = 0; i < btns.length; i++) {
+    btns[i].onclick = function () { startPrayer(parseInt(this.getAttribute('data-mins'), 10) * 60); };
+  }
+  document.getElementById('stop').onclick = function () { finish(false); };
+
+  load();
+  paint();
+  setInterval(function () { if (!running) { paint(); } }, 30000);
+})();
+</script>
+</body>
+</html>
