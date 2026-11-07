@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>DrawNigh hand-over test</title>
+<style>
+  body { font-family: Georgia, serif; background: #faf6ee; color: #2b2418; margin: 0; padding: 24px 16px; text-align: center; line-height: 1.5; }
+  h1 { font-size: 22px; }
+  #msg { font-size: 18px; font-weight: bold; margin-top: 20px; color: #8a6d3b; }
+  .ok { color: #1d7a33 !important; }
+  .bad { color: #b3261e !important; }
+</style>
+</head>
+<body>
+<h1>DrawNigh hand-over test</h1>
+<p>This page answers the test file on the phone.</p>
+<p id="msg">Waiting for the test file…</p>
+
+<script>
+var KEY = 'dnHandoverSite';
+var done = false;
+var tries = 0;
+var msg = document.getElementById('msg');
+
+function show(text, cls) {
+  msg.textContent = text;
+  msg.className = cls || '';
+}
+
+if (!window.opener) {
+  show('Open this page from the test file, not directly.', 'bad');
+} else {
+  var ping = setInterval(function () {
+    if (done || tries > 120) {
+      clearInterval(ping);
+      if (!done) { show('No answer from the test file.', 'bad'); }
+      return;
+    }
+    tries++;
+    try { window.opener.postMessage({ type: 'dn-ready' }, '*'); } catch (e) {}
+  }, 500);
+}
+
+window.addEventListener('message', function (ev) {
+  var d = ev.data;
+  if (done || !d || typeof d !== 'object' || d.type !== 'dn-give') { return; }
+  if (ev.origin !== 'null' && ev.origin.indexOf('file:') !== 0) { return; }
+  var kept = {};
+  try { kept = JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { kept = {}; }
+  kept.count = (kept.count || 0) + 1;
+  kept.lastOpens = d.opens;
+  try { localStorage.setItem(KEY, JSON.stringify(kept)); } catch (e) {}
+  done = true;
+  ev.source.postMessage({ type: 'dn-back', token: d.token, saw: String(d.opens), siteCount: kept.count }, '*');
+  show('Done. Go back to the test file tab.', 'ok');
+});
+</script>
+</body>
+</html>
