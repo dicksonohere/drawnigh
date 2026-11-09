@@ -129,6 +129,7 @@
     if (state.streak.last && state.streak.last !== t && state.streak.last !== yesterdayStr(now)) {
       state.streak.days = 0; state.streak.last = null;
     }
+    try { titheRoll(state, now); } catch (e) {}          // v1.1.8 — settles days and Saturdays
   }
 
   // v1.0.4: fills in anything a older saved state does not have yet. Additive
@@ -175,6 +176,7 @@
     if (s.translation === undefined)     s.translation = 'kjv';
     if (state.nlt === undefined)         state.nlt = { kept: {}, out: null };
     if (!state.nlt.kept)                 state.nlt.kept = {};
+    titheMigrate(state);                                           // v1.1.8 — Tithe of the Day
     seedLapFromHistory(state);                                     // v1.0.6
     repairCatchUpLaps(state);                                      // v1.1.0, finding 6
     // v1.0.9: history starts when dates start. Everything already earned on the
@@ -1169,6 +1171,9 @@
     });
     nltTrim(out);
 
+    // v1.1.8 (331) — Tithe of the Day: each device's seconds, joined.
+    out.tithe = titheMerge(mine, theirs);
+
     // Settings stay this device's own — card position and pop-up timing
     // belong to the device, not to the reading.
     return out;
@@ -1608,7 +1613,10 @@
       nl: (state.nlt && state.nlt.kept) || {},
       /* v1.1.5 — when each changeable thing last changed (sync, Decision 240).
          An older DrawNigh reading this code ignores it, and loses nothing. */
-      w: state.lw || {}
+      w: state.lw || {},
+      /* v1.1.8 — Tithe of the Day. The device's own column name and its
+         running timer stay behind: a new phone is a new column. */
+      ti: titheForCode(state)
     };
   }
   function fromPacked(p) {
@@ -1641,6 +1649,7 @@
       seasons: p.se || { now: null, past: [] },
       nlt: { kept: p.nl || {}, out: null },
       lw: p.w || {},                // v1.1.5
+      tithe: titheFromCode(p.ti),   // v1.1.8
       prayRun: null,                // a prayer belongs to the phone it was prayed on
       audioRun: null                // and so does a reading aloud
     };
@@ -1877,8 +1886,14 @@
     out.room = rr;
     return out;
   }
+  /* v1.1.8 test sitting, F8 and F13 — every write carries a fresh mark, so
+     the app open in a tab can tell its own writes from the browsing card's,
+     the toolbar popup's, or another tab's, and take theirs up instead of
+     writing its older copy over them. */
+  var _wSeq = 0;
   function saveState(state, cb) {
     var ext = _ext();
+    if (state) state._w = Date.now().toString(36) + '.' + (++_wSeq) + '.' + Math.floor(Math.random() * 1e6).toString(36);
     state = storable(state);
     if (ext) {
       var obj = {}; obj[KEY] = state;
@@ -3116,6 +3131,446 @@
     return out;
   }
 
+  // ================= v1.1.8 — Tithe of the Day =================
+  // Design: claude/DrawNigh_Tithe_of_a_Day_Design_Document_v1_BUILD_BRIEF.md
+  // (provisional T1–T58, numbered 274–331 in the 1.1.8 build record).
+  //
+  // A tenth of the day — 8,640 seconds — given to God in private, counted to
+  // the second, grown toward a few seconds at a time. Every 5 seconds is one
+  // smooth stone. Nothing here is typed in by hand (Decision 282): every
+  // second arrives from a clock that was actually running.
+  //
+  // Seconds are kept per day AND per device, so two phones reading on the
+  // same day add together through sync (285) and a sync run twice never
+  // counts anything twice: each device only ever raises its own numbers.
+  // A day's record per device: [reading, prayer, away, after6pm, popupRead, popupShown]
+  var TITHE_FULL = 8640;            // 274/286 — a tenth of 86,400
+  var TITHE_FLOOR = 5;              // one stone
+  var TITHE_STONE = 5;              // 296 — 5 seconds = 1 stone
+  var TITHE_KEEP_DAYS = 120;        // older days fold into their year's record
+  // 302 — David's journey. Each Saturday 6pm, the week's daily average earns
+  // the highest title it has fully reached. Zero earns "God is waiting".
+  var TITHE_TITLES = [
+    { s: 5,    id: 'shepherd', name: 'Shepherd Boy' },
+    { s: 60,   id: 'harp',     name: 'Harp Player' },
+    { s: 300,  id: 'armour',   name: 'Armour-bearer' },
+    { s: 900,  id: 'giant',    name: 'Giant-slayer' },
+    { s: 1800, id: 'captain',  name: 'Captain of Thousands' },
+    { s: 3600, id: 'mighty',   name: 'Mighty Man' },
+    { s: 5400, id: 'anointed', name: 'The Anointed' },
+    { s: 7200, id: 'heart',    name: 'After God’s Own Heart' },
+    { s: 8640, id: 'king',     name: 'King' }
+  ];
+  var TITHE_WAITING = 'God is waiting';   // 305 — no count is kept for it
+
+  function tRand(n) {
+    var a = 'abcdefghjkmnpqrstuvwxyz23456789', s = '';
+    for (var i = 0; i < n; i++) s += a.charAt(Math.floor(Math.random() * a.length));
+    return s;
+  }
+  function titheMigrate(state) {
+    var t = state.tithe;
+    if (!t || typeof t !== 'object') t = state.tithe = {};
+    if (t.on === undefined) t.on = false;            // 327 — off until the reader says yes
+    if (t.asked === undefined) t.asked = false;      // the ⋮ menu's quiet suggestion
+    if (!t.dev) t.dev = tRand(5);                    // this device's own column
+    if (!t.target) t.target = TITHE_FLOOR;           // 287 — starts at one stone
+    if (t.tA === undefined) t.tA = 0;                // when the target last changed
+    if (!t.days) t.days = {};
+    if (!t.years) t.years = {};                      // year -> device -> [r,p,a,free]
+    if (!t.weeks) t.weeks = {};                      // Saturday date -> [average, target then]
+    if (t.dd === undefined) t.dd = null;             // last day whose growth was settled
+    if (t.wk === undefined) t.wk = null;             // last Saturday whose title was settled
+    if (t.auto === undefined) t.auto = false;        // 291 — weekly jump offered, unless switched
+    if (t.awayOn === undefined) t.awayOn = true;     // 281 — on by default
+    if (t.offer === undefined) t.offer = null;       // { k:'up'|'down', s:secs, wk }
+    if (t.downFrom === undefined) t.downFrom = null; // the 7-week count restarts after an answer
+    if (t.season === undefined) t.season = null;     // { until, why, sA }
+    if (t.resume === undefined) t.resume = false;    // season over: ask once
+    if (t.ck === undefined) t.ck = { due: false, wk: null, low: 0, said: '' };
+    if (t.seen === undefined) t.seen = null;         // the newest week the reader has looked at
+    if (t.awayRun === undefined) t.awayRun = null;   // { start, dur } — belongs to this phone
+    if (t.rem === undefined) t.rem = { on: false, m: '06:30', n: '21:30' };
+    return t;
+  }
+
+  function tDate(ms) { return todayStr(ms); }
+  function tDayStart(dateStr) {
+    var p = dateStr.split('-');
+    return new Date(+p[0], +p[1] - 1, +p[2]).getTime();
+  }
+  function tAddDays(dateStr, n) {
+    var p = dateStr.split('-');
+    var d = new Date(+p[0], +p[1] - 1, +p[2] + n);
+    return todayStr(d.getTime());
+  }
+  function tSixPm(dateStr) { return tDayStart(dateStr) + 18 * 3600 * 1000; }
+  function tRow(t, date, dev) {
+    var d = t.days[date] || (t.days[date] = {});
+    return d[dev] || (d[dev] = [0, 0, 0, 0, 0, 0]);
+  }
+  var T_KIND = { r: 0, p: 1, a: 2 };
+
+  // Seconds given between two moments, split at midnight and at 6pm so a
+  // prayer that ran across either lands on the right side of it.
+  function titheAddSpan(state, kind, startMs, endMs) {
+    var t = titheMigrate(state);
+    var k = T_KIND[kind];
+    if (k === undefined || !(endMs > startMs)) return 0;
+    var total = 0, a = startMs;
+    while (a < endMs) {
+      var date = tDate(a);
+      var six = tSixPm(date), next = tDayStart(tAddDays(date, 1));
+      var cut = a < six ? Math.min(six, endMs) : Math.min(next, endMs);
+      var secs = (cut - a) / 1000;
+      var row = tRow(t, date, t.dev);
+      row[k] = Math.round((row[k] + secs) * 10) / 10;
+      if (a >= six) row[3] = Math.round((row[3] + secs) * 10) / 10;
+      total += secs;
+      a = cut;
+    }
+    return total;
+  }
+  function titheAdd(state, kind, secs, now) {
+    var end = now || Date.now();
+    return titheAddSpan(state, kind, end - secs * 1000, end);
+  }
+  // 322 / 325 — the browsing card's own record: a verse read by Next, a card shown.
+  function titheCountCard(state, what, now) {
+    var t = titheMigrate(state);
+    var row = tRow(t, tDate(now || Date.now()), t.dev);
+    if (what === 'read') row[4]++;
+    if (what === 'shown') row[5]++;
+  }
+
+  // One day, all devices together.
+  function titheDay(state, date) {
+    var t = titheMigrate(state), d = t.days[date] || {}, o = { r: 0, p: 0, a: 0, e: 0, pv: 0, ps: 0 };
+    for (var dev in d) {
+      var x = d[dev];
+      o.r += x[0]; o.p += x[1]; o.a += x[2]; o.e += x[3]; o.pv += x[4] || 0; o.ps += x[5] || 0;
+    }
+    o.t = Math.floor(o.r + o.p + o.a);
+    o.r = Math.floor(o.r); o.p = Math.floor(o.p); o.a = Math.floor(o.a); o.e = Math.floor(o.e);
+    return o;
+  }
+  function titheToday(state, now) { return titheDay(state, tDate(now || Date.now())); }
+
+  function tInSeason(t, date) { return !!(t.season && t.season.until && date <= t.season.until); }
+  // 293/295 — in a busy season the day asks only one stone, and growth rests.
+  function titheTarget(state, now) {
+    var t = titheMigrate(state);
+    return tInSeason(t, tDate(now || Date.now())) ? TITHE_FLOOR : t.target;
+  }
+  function tSetTarget(t, secs, now) {
+    t.target = Math.max(TITHE_FLOOR, Math.min(TITHE_FULL, Math.round(secs)));
+    t.tA = now || Date.now();
+  }
+
+  // ---------- Stones (296–301) ----------
+  // 12 stones = a rock (a minute), 60 rocks = a boulder (an hour),
+  // 24 boulders = a hill (a whole day), 10 hills = a mountain. Merged by
+  // themselves (297): there is nothing to tap.
+  function titheStones(secs) {
+    var st = Math.floor(Math.max(0, secs) / TITHE_STONE);
+    var m = Math.floor(st / 172800); st -= m * 172800;
+    var h = Math.floor(st / 17280); st -= h * 17280;
+    var b = Math.floor(st / 720); st -= b * 720;
+    var r = Math.floor(st / 12); st -= r * 12;
+    return { mountain: m, hill: h, boulder: b, rock: r, stone: st };
+  }
+  function titheStoneText(secs) {
+    var s = titheStones(secs), out = [];
+    function add(n, one, many) { if (n) out.push(n + ' ' + (n === 1 ? one : many)); }
+    add(s.mountain, 'Mountain', 'Mountains'); add(s.hill, 'Hill', 'Hills');
+    add(s.boulder, 'Boulder', 'Boulders'); add(s.rock, 'Rock', 'Rocks'); add(s.stone, 'Stone', 'Stones');
+    return out.length ? out.join(' · ') : '0 Stones';
+  }
+  // `round`: averages and offers read better without the seconds once past a minute.
+  function titheTimeText(secs, round) {
+    secs = Math.floor(Math.max(0, secs));
+    if (round && secs >= 60) secs = Math.round(secs / 60) * 60;
+    var h = Math.floor(secs / 3600), m = Math.floor(secs % 3600 / 60), x = secs % 60, o = [];
+    if (h) o.push(h + ' hr');
+    if (m) o.push(m + ' min');
+    if (x || !o.length) o.push(x + ' sec');
+    return o.join(' ');
+  }
+
+  // ---------- Titles (302–305) ----------
+  function titheTitleFor(avg) {
+    var hit = null;
+    for (var i = 0; i < TITHE_TITLES.length; i++) if (avg >= TITHE_TITLES[i].s) hit = TITHE_TITLES[i];
+    return hit;   // null = God is waiting
+  }
+  function titheNextTitle(avg) {
+    for (var i = 0; i < TITHE_TITLES.length; i++) if (avg < TITHE_TITLES[i].s) return TITHE_TITLES[i];
+    return null;
+  }
+  // The week that ends on Saturday `sat` at 6pm: last Saturday after 6pm,
+  // Sunday to Friday whole, this Saturday before 6pm (287/289).
+  function titheWeekSum(state, sat) {
+    var prev = titheDay(state, tAddDays(sat, -7));
+    var sum = prev.e;
+    for (var i = 6; i >= 1; i--) sum += titheDay(state, tAddDays(sat, -i)).t;
+    var cur = titheDay(state, sat);
+    sum += Math.max(0, cur.t - cur.e);
+    return sum;
+  }
+  // The Saturday whose 6pm is the latest one at or before `now`.
+  function tLastSat(now) {
+    var d = new Date(now), back = (d.getDay() + 1) % 7;   // Saturday = 6
+    var sat = todayStr(new Date(d.getFullYear(), d.getMonth(), d.getDate() - back).getTime());
+    if (now < tSixPm(sat)) sat = tAddDays(sat, -7);
+    return sat;
+  }
+  function tNextSat(now) { return tAddDays(tLastSat(now), 7); }
+  function titheTitles(state) {
+    var t = titheMigrate(state), counts = {}, keys = Object.keys(t.weeks).sort();
+    var best = null, cur = null, last = null;
+    keys.forEach(function (k) {
+      var avg = t.weeks[k][0], ti = titheTitleFor(avg);
+      last = k; cur = ti;
+      if (ti) {
+        counts[ti.id] = (counts[ti.id] || 0) + 1;
+        if (!best || ti.s > best.s) best = ti;
+      }
+    });
+    return { counts: counts, current: cur, highest: best, lastWeek: last,
+             lastAvg: last ? t.weeks[last][0] : null, weeks: keys.length };
+  }
+
+  // ---------- The daily and weekly settling (287–295) ----------
+  // Called on every load, from rollover. Days are settled up to yesterday:
+  // a day that met its target grows tomorrow's by one stone (287); three
+  // short days in a row bring the quiet check-in (294). Saturdays are settled
+  // at 6pm: the week's title (302), the offer to rise (290) or, after seven
+  // short weeks, to come down (292).
+  function titheRoll(state, now) {
+    var t = titheMigrate(state);
+    if (!t.on) return;
+    now = now || Date.now();
+    var today = tDate(now), yest = tAddDays(today, -1);
+    if (!t.dd) t.dd = yest;
+    var guard = 0;
+    while (t.dd < yest && guard++ < 400) {
+      var day = tAddDays(t.dd, 1), tot = titheDay(state, day).t;
+      if (tInSeason(t, day)) { t.ck.low = 0; }
+      else {
+        if (tot >= t.target) { tSetTarget(t, t.target + TITHE_FLOOR, now); t.ck.low = 0; }
+        else t.ck.low = (t.ck.low || 0) + 1;
+        if (t.ck.low >= 3 && t.ck.wk !== tNextSat(now)) t.ck.due = true;
+      }
+      t.dd = day;
+    }
+    // A season that has run its course asks, once, if the reader is ready.
+    if (t.season && t.season.until && today > t.season.until && !t.resume) t.resume = true;
+
+    var lastSat = tLastSat(now);
+    if (!t.wk) t.wk = lastSat;
+    guard = 0;
+    while (t.wk < lastSat && guard++ < 60) {
+      var sat = tAddDays(t.wk, 7);
+      var avg = Math.floor(titheWeekSum(state, sat) / 7);
+      var tgt = tInSeason(t, sat) ? TITHE_FLOOR : t.target;
+      var w = t.weeks[sat];
+      t.weeks[sat] = [w ? Math.max(w[0], avg) : avg, tgt, tInSeason(t, sat) ? 1 : 0];
+      t.wk = sat;
+      if (avg === 0 && t.ck.wk !== tNextSat(now)) t.ck.due = true;   // a zero week asks too
+    }
+    tWeeklyOffer(t, now);
+    titheCompact(state, now);
+  }
+  function tWeeklyOffer(t, now) {
+    var keys = Object.keys(t.weeks).sort();
+    if (!keys.length) return;
+    var last = keys[keys.length - 1], w = t.weeks[last];
+    if (t.offer && t.offer.wk === last) return;      // already said this week
+    if (w[2]) return;                                // a season week offers nothing
+    // 290/291 — rise to the week's average when it is above the target.
+    // His rule: up to one stone a day grows by itself; anything bigger is offered.
+    if (w[0] > t.target + TITHE_FLOOR && t.target < TITHE_FULL) {
+      var up = Math.min(TITHE_FULL, w[0]);
+      if (t.auto) { tSetTarget(t, up, now); t.offer = null; }
+      else t.offer = { k: 'up', s: up, wk: last };
+      return;
+    }
+    // 292 — seven weeks in a row below: offer to set the tithe where the reader is.
+    var run = 0, sum = 0;
+    for (var i = keys.length - 1; i >= 0; i--) {
+      var x = t.weeks[keys[i]];
+      if (x[2] || (t.downFrom && keys[i] <= t.downFrom) || x[0] >= x[1]) break;
+      run++; sum += x[0];
+      if (run === 7) break;
+    }
+    if (run >= 7) {
+      var down = Math.max(TITHE_FLOOR, Math.floor(sum / 7));
+      if (down < t.target) t.offer = { k: 'down', s: down, wk: last };
+    }
+  }
+  function titheOfferAnswer(state, yes, now) {
+    var t = titheMigrate(state), o = t.offer;
+    if (!o) return;
+    if (yes) tSetTarget(t, o.s, now);
+    if (o.k === 'down') t.downFrom = o.wk;           // either answer restarts the count
+    t.offer = null;
+  }
+  // 294–296 — the check-in. Asked once a week at most.
+  function titheCheckin(state, answer, weeks, now) {
+    var t = titheMigrate(state);
+    now = now || Date.now();
+    t.ck.due = false; t.ck.wk = tNextSat(now);
+    t.ck.low = 0; t.ck.said = answer;
+    if (answer === 'busy' || answer === 'unwell') {
+      t.season = { until: tAddDays(tDate(now), 7 * (weeks || 1) - 1), why: answer, sA: now };
+      t.resume = false;
+    }
+  }
+  function titheResume(state, ready, now) {
+    var t = titheMigrate(state);
+    now = now || Date.now();
+    if (ready) { t.season = null; t.resume = false; t.dd = tAddDays(tDate(now), -1); return; }
+    if (t.season) { t.season.until = tAddDays(tDate(now), 6); t.season.sA = now; }
+    t.resume = false;
+  }
+  function titheTurnOn(state, now) {
+    var t = titheMigrate(state);
+    now = now || Date.now();
+    t.on = true; t.asked = true;
+    if (!t.dd) t.dd = tAddDays(tDate(now), -1);
+    if (!t.wk) t.wk = tLastSat(now);
+  }
+
+  // ---------- Years (301) ----------
+  // The bag resets at midnight on 31 December; the year's final state is
+  // kept as that year's record. Old days fold into it, so the record stays small.
+  function titheCompact(state, now) {
+    var t = titheMigrate(state);
+    var cut = tAddDays(tDate(now || Date.now()), -TITHE_KEEP_DAYS);
+    Object.keys(t.days).forEach(function (date) {
+      if (date >= cut) return;
+      var y = date.slice(0, 4), yr = t.years[y] || (t.years[y] = {});
+      var free = Math.max(0, titheDay(state, date).t - TITHE_FULL);
+      var d = t.days[date], first = true;
+      for (var dev in d) {
+        var a = yr[dev] || (yr[dev] = [0, 0, 0, 0]);
+        a[0] += d[dev][0]; a[1] += d[dev][1]; a[2] += d[dev][2];
+        if (first) { a[3] += free; first = false; }
+      }
+      delete t.days[date];
+    });
+  }
+  function titheYear(state, year) {
+    var t = titheMigrate(state), o = { r: 0, p: 0, a: 0, free: 0 };
+    var yr = t.years[year] || {};
+    for (var dev in yr) { o.r += yr[dev][0]; o.p += yr[dev][1]; o.a += yr[dev][2]; o.free += yr[dev][3]; }
+    Object.keys(t.days).forEach(function (date) {
+      if (date.slice(0, 4) !== String(year)) return;
+      var d = titheDay(state, date);
+      o.r += d.r; o.p += d.p; o.a += d.a; o.free += Math.max(0, d.t - TITHE_FULL);
+    });
+    o.t = Math.floor(o.r + o.p + o.a);
+    return o;
+  }
+  function titheYearList(state) {
+    var t = titheMigrate(state), ys = {};
+    Object.keys(t.years).forEach(function (y) { ys[y] = 1; });
+    Object.keys(t.days).forEach(function (d) { ys[d.slice(0, 4)] = 1; });
+    return Object.keys(ys).sort().reverse();
+  }
+
+  // ---------- The away timer (280) ----------
+  // A countdown, an hour at most. It stops itself, and only the time to the
+  // chime counts: a forgotten timer can never add more than was chosen.
+  function titheAwayStart(state, secs, now) {
+    var t = titheMigrate(state);
+    t.awayRun = { start: now || Date.now(), dur: Math.max(60, Math.min(3600, Math.round(secs))) };
+    return t.awayRun;
+  }
+  function titheAwayLeft(state, now) {
+    var r = titheMigrate(state).awayRun;
+    if (!r) return 0;
+    return Math.max(0, r.start + r.dur * 1000 - (now || Date.now()));
+  }
+  // Ends the timer and credits what was given: the whole length if it ran
+  // out, the seconds so far if stopped early.
+  function titheAwayEnd(state, now) {
+    var t = titheMigrate(state), r = t.awayRun;
+    if (!r) return 0;
+    now = now || Date.now();
+    var end = Math.min(now, r.start + r.dur * 1000);
+    t.awayRun = null;
+    return titheAddSpan(state, 'a', r.start, end);
+  }
+
+  // ---------- The browsing card's inbox ----------
+  // The card on a website writes here, not into the reading itself, so the
+  // app open in another tab can never overwrite what the card added. The
+  // app folds the inbox in whenever it looks.
+  function titheFold(state, items) {
+    var t = titheMigrate(state), n = 0;
+    (items || []).forEach(function (it) {
+      if (!it) return;
+      if (it.k === 'read' || it.k === 'shown') { titheCountCard(state, it.k, it.at); n++; return; }
+      if (T_KIND[it.k] !== undefined && it.end > it.start) { titheAddSpan(state, it.k, it.start, it.end); n++; }
+    });
+    return n;
+  }
+
+  // ---------- Sync (331) ----------
+  function titheMerge(mine, theirs) {
+    var A = titheMigrate(mine), B = (theirs && theirs.tithe) ? titheMigrate(theirs) : null;
+    var out = JSON.parse(JSON.stringify(A));
+    if (!B) return out;
+    // Each device's own column: the higher number is the later one.
+    [A.days, B.days].forEach(function (src) {
+      for (var date in src) for (var dev in src[date]) {
+        var o = out.days[date] || (out.days[date] = {});
+        var x = o[dev], y = src[date][dev];
+        if (!x) { o[dev] = y.slice(); continue; }
+        for (var i = 0; i < 6; i++) x[i] = Math.max(x[i] || 0, y[i] || 0);
+      }
+    });
+    [A.years, B.years].forEach(function (src) {
+      for (var yy in src) for (var dv in src[yy]) {
+        var o2 = out.years[yy] || (out.years[yy] = {});
+        var a = o2[dv], b = src[yy][dv];
+        if (!a) { o2[dv] = b.slice(); continue; }
+        for (var j = 0; j < 4; j++) a[j] = Math.max(a[j], b[j]);
+      }
+    });
+    // A day folded into a year on one side and still loose on the other is
+    // counted once: the loose copy goes.
+    var oldCut = tAddDays(todayStr(), -TITHE_KEEP_DAYS);
+    Object.keys(out.days).forEach(function (date) {
+      if (date < oldCut && out.years[date.slice(0, 4)] &&
+          (A.days[date] === undefined || B.days[date] === undefined)) delete out.days[date];
+    });
+    for (var wk in B.weeks) {
+      var w = out.weeks[wk];
+      if (!w || B.weeks[wk][0] > w[0]) out.weeks[wk] = B.weeks[wk].slice();
+    }
+    if ((B.tA || 0) > (A.tA || 0)) { out.target = B.target; out.tA = B.tA; }
+    var sa = (A.season && A.season.sA) || 0, sb = (B.season && B.season.sA) || 0;
+    if (sb > sa) out.season = B.season ? JSON.parse(JSON.stringify(B.season)) : null;
+    if (B.on && !A.asked) { out.on = true; out.asked = true; }
+    if (B.downFrom && (!out.downFrom || B.downFrom > out.downFrom)) out.downFrom = B.downFrom;
+    return out;
+  }
+
+  function titheForCode(state) {
+    if (!state.tithe) return null;
+    var c = JSON.parse(JSON.stringify(state.tithe));
+    delete c.awayRun; delete c.dev;
+    return c;
+  }
+  function titheFromCode(c) {
+    if (!c) return undefined;
+    var t = JSON.parse(JSON.stringify(c));
+    t.awayRun = null; t.dev = null;
+    return t;
+  }
+
   // ---------- Exports ----------
   var Engine = {
     COUNTS: COUNTS, BOOKS: BOOKS, TOTAL_VERSES: TOTAL_VERSES, OT_END: OT_END,
@@ -3197,7 +3652,18 @@
     roomBlob: roomBlob, roomBlobRead: roomBlobRead, roomFromBlob: roomFromBlob,
     roomMergeContents: roomMergeContents, storable: storable,
     lwwSnap: lwwSnap, lwwTrack: lwwTrack, syncMerge: syncMerge, planKey: planKey,
-    toPacked: toPacked, fromPacked: fromPacked
+    toPacked: toPacked, fromPacked: fromPacked,
+    // v1.1.8 — Tithe of the Day
+    TITHE_FULL: TITHE_FULL, TITHE_FLOOR: TITHE_FLOOR, TITHE_TITLES: TITHE_TITLES, TITHE_WAITING: TITHE_WAITING,
+    titheMigrate: titheMigrate, titheAdd: titheAdd, titheAddSpan: titheAddSpan, titheCountCard: titheCountCard,
+    titheDay: titheDay, titheToday: titheToday, titheTarget: titheTarget,
+    titheStones: titheStones, titheStoneText: titheStoneText, titheTimeText: titheTimeText,
+    titheTitleFor: titheTitleFor, titheNextTitle: titheNextTitle, titheTitles: titheTitles,
+    titheWeekSum: titheWeekSum, titheRoll: titheRoll, titheOfferAnswer: titheOfferAnswer,
+    titheCheckin: titheCheckin, titheResume: titheResume, titheTurnOn: titheTurnOn,
+    titheYear: titheYear, titheYearList: titheYearList, titheCompact: titheCompact,
+    titheAwayStart: titheAwayStart, titheAwayLeft: titheAwayLeft, titheAwayEnd: titheAwayEnd,
+    titheFold: titheFold, titheMerge: titheMerge, tLastSat: tLastSat
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = Engine;

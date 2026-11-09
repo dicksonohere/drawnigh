@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>DrawNigh update</title>
+<style>
+  body { font-family: Georgia, serif; background: #171310; color: #e9dfc8; margin: 0; padding: 28px 18px; text-align: center; line-height: 1.5; }
+  h1 { font-size: 21px; color: #e3c477; font-weight: normal; }
+  #msg { font-size: 17px; margin-top: 18px; color: #c8a24a; }
+  .ok { color: #9fd29a !important; } .bad { color: #e08a7a !important; }
+</style>
+</head>
+<body>
+<h1>DrawNigh update</h1>
+<p>This page hands the newest DrawNigh to your saved file. The file checks its maker's stamp before it uses anything.</p>
+<p id="msg">Getting the update…</p>
+<script>
+/* Decision 271 / 332 — the website half of the update hand-over. It sends the
+   stamped update (saved/update.json) to the saved file that opened this tab.
+   The stamp, not this page, is what the file trusts. */
+(function () {
+  var msg = document.getElementById('msg');
+  function show(t, c) { msg.textContent = t; msg.className = c || ''; }
+  if (!window.opener) { show('Open this page from your saved DrawNigh, using its Update button.', 'bad'); return; }
+  var got = false;
+  window.addEventListener('message', function (ev) {
+    if (ev.data && ev.data.type === 'dn-saved-got') { got = true; show('Done. Go back to your DrawNigh tab.', 'ok'); }
+  });
+  fetch('saved/update.json', { cache: 'no-store' })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .catch(function () { return null; })
+    .then(function (pkg) {
+      var tries = 0;
+      var t = setInterval(function () {
+        if (got || ++tries > 120) {
+          clearInterval(t);
+          if (!got) show('Your DrawNigh tab did not answer. Go back to it and tap Update again.', 'bad');
+          return;
+        }
+        try { window.opener.postMessage({ type: 'dn-saved-update', pkg: pkg }, '*'); } catch (e) {}
+      }, 500);
+    });
+})();
+</script>
+</body>
+</html>

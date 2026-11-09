@@ -22,6 +22,7 @@
    drawnigh-v8 → Web 1.1.6 — the fixes after the 1.1.5 hand test (Decisions
                  253–263): a room brought from sync, the filing box, and
                  squares that carry a locked room correctly.
+   drawnigh-v10 → Web 1.1.8 — Tithe of the Day (Decisions 274–331, 335–336).
    drawnigh-v9 → Web 1.1.7 — sync open to every reader, after Google's
                  approval; the add-on's sign-in page moved to counselofgod.org.
    drawnigh-v7 → Web 1.1.5 — the Secret Place locked on the phone, the spare
@@ -31,7 +32,7 @@
                  handler below passes them straight through and never caches
                  them — a sign-in or a Drive copy is never kept here.
 */
-var CACHE = 'drawnigh-v9';
+var CACHE = 'drawnigh-v10';
 var FILES = [
   '.',
   'index.html',

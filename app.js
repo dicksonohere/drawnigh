@@ -857,6 +857,7 @@
   // v1.0.5: ✕ ends the prayer at once and in silence — no chime, and nothing to
   // confirm, because nothing is lost. Built for the moment a customer walks up.
   function endPray() {
+    tCreditPray(false);   // v1.1.8 — what was prayed, to the tithe
     E.prayCancel(state); save();
     cancelChime(); releaseScreen();
     if (prayPaint) { clearInterval(prayPaint); prayPaint = null; }
@@ -866,6 +867,7 @@
   // A prayer that ran out — whether or not anyone was looking.
   function finishPray() {
     var wasBooked = bookedChime.length > 0;
+    tCreditPray(true);    // v1.1.8
     E.prayCancel(state); save();
     releaseScreen();
     knockReset();   // the clock ran out mid-knock; nothing is carried over
@@ -993,13 +995,14 @@
     $('miLadder').style.display = offer ? '' : 'none';
     if (offer) $('miLadderText').textContent = 'A word about ' + planName();
     $('badgeDot').style.display = E.unseenBadges(state).length ? '' : 'none';
+    $('titheDot').style.display = tDotWanted() ? '' : 'none';   // v1.1.8
   }
   function planName() {
     var p = state.activePlanId ? E.getPlan(state, state.activePlanId) : null;
     return p ? p.name : 'your plan';
   }
   function updateDots() {
-    var waiting = !!pendingOffer() || E.unseenBadges(state).length > 0;
+    var waiting = !!pendingOffer() || E.unseenBadges(state).length > 0 || tDotWanted();   // v1.1.8
     $('dotsDot').style.display = waiting ? '' : 'none';
   }
 
@@ -1289,7 +1292,8 @@
     // A verse is counted when the reader moves past it with Next › —
     // a verse merely shown is never counted (same rule as the pop-up cards).
     nltSaid = '';                 // the word about the last verse was about the last verse
-    current = { ref: ref, counted: false, planId: planId };
+    current = { ref: ref, counted: false, planId: planId, at: Date.now() };
+    tPaintNext();                     // 345
     if (mode === 'random') {
       randTrail.push(current);
       if (randTrail.length > 500) randTrail.shift();
@@ -1347,6 +1351,7 @@
     var r = current.ref;
     E.countRead(state, r[0], r[1], r[2], { planInOrder: current.planId });
     current.counted = true;
+    tStoneForVerse(current);          // v1.1.8, Decision 337 — one stone a verse
     if (mode === 'book' && current.planId === null) {
       // advance the bookmark only when the verse actually belongs to book mode
       var p = E.bookPosition(state, currentBook);
@@ -3794,7 +3799,7 @@
      two web uploads both called themselves "Web 1.1.4 (NLT)" and nobody could
      tell which was live). The add-on reads its own manifest; the website
      carries its label here, with the word Web to tell them apart. */
-  var WEB_VERSION = 'Web 1.1.7';
+  var WEB_VERSION = 'Web 1.1.8';
   function extVersion() {
     if (!IS_EXT) return WEB_VERSION;
     try { return 'Version ' + ((XAPI && XAPI.runtime.getManifest().version) || ''); } catch (e) { return ''; }
@@ -4818,7 +4823,8 @@
     /* never two at once. v1.1.7 — found when sync opened: a new reader's first
        open always has another box up (the setup, the verse of the day), so the
        offer was skipped for good. It now waits for that box to close. */
-    if (document.querySelector('.overlay.show')) {
+    // v1.1.8 — an open sheet (Tithe of the Day, Badges…) is a box too.
+    if (document.querySelector('.overlay.show, .sheet.show')) {
       if (++offerTries < 150) setTimeout(maybeOfferSync, 2000);
       return;
     }
@@ -4950,6 +4956,567 @@
       lastResume = Date.now();
       runSync('resume');
     }
+  }
+
+  /* ============================================================
+     v1.1.8 — Tithe of the Day (Decisions 274–331, 335–336)
+     The counting rules live in engine.js. This is the screen, the clocks
+     that feed it, and the few places the rest of the app hands it seconds.
+     ============================================================ */
+  var tLastTouch = Date.now(), tLastTick = Date.now(), tPending = 0, tHeld = 0;
+  var tMedit = false, tMeditAt = 0, tStillAt = 0, tTickT = null, tFlushAt = Date.now(), tAwayChimed = false;
+  var T_IDLE = 120000;           // a ⏳ sitting untouched this long is held until somebody answers
+  var T_STILL = 30 * 60000;      // 279 — "Still with the Word?" after half an hour
+  var T_STILL_WAIT = 60000;      // and a minute to answer
+  var T_INBOX = 'drawnigh-tithe-inbox';
+
+  function tOn() { return !!(state && state.tithe && state.tithe.on); }
+  function tSheetOpen() { return $('titheSheet').classList.contains('show'); }
+  function tReadScreen() { var s = $('screen-read'); return !!(s && s.classList.contains('active')); }
+
+  // Every touch is a sign somebody is there.
+  function tTouch() {
+    tLastTouch = Date.now();
+    if (tHeld) { tPending += tHeld; tHeld = 0; }       // a meditation confirmed by a touch
+  }
+
+  /* v1.1.8 test sitting, Decisions 337–339 — reading counts by the verse,
+     not by the clock. Each verse moved past with Next is one stone (see
+     tStoneForVerse); the screen merely being open counts nothing. Time on a
+     verse counts only while ⏳ is running, until Stop. And while the away
+     timer runs, nothing else counts: the phone is meant to be set down. */
+  function tAwayRunning(now) { return !!(state.tithe.awayRun && E.titheAwayLeft(state, now) > 0); }
+  function tTick() {
+    var now = Date.now(), dt = now - tLastTick;
+    tLastTick = now;
+    if (!tOn()) return;
+    if (dt <= 0 || dt > 2500) dt = 0;
+    var showing = !document.hidden && tReadScreen() && !!current;
+    // 344 — while 🙏 is counting down, the prayer carries this time; ⏳ adds
+    // nothing, so the same minute is never given twice.
+    if (tMedit && showing && dt && !tAwayRunning(now) && !E.prayRunning(state)) {
+      if (now - tLastTouch < T_IDLE) tPending += dt;
+      else tHeld += dt;                                  // 278 — kept aside until somebody answers
+    }
+    if (tMedit && !tStillAt && now - tLastTouch >= T_STILL) {
+      tStillAt = now; $('stillOverlay').classList.add('show');
+    }
+    if (tStillAt && now - tStillAt >= T_STILL_WAIT) tStillNo();
+    // The away timer ends itself.
+    if (state.tithe.awayRun && E.titheAwayLeft(state, now) <= 0) tAwayFinish(true);
+    if (tPending >= 15000 || (tPending && now - tFlushAt > 15000)) tFlush();
+    if (tSheetOpen()) tPaintLive();
+    if (tMedit) tPaintMedit();                           // 341 — the count-up moves every second
+    tPaintNext();                                        // 345
+    if (now % 5000 < 1000) { tPaintChip(); tPaintMedit(); }
+  }
+  // 337 — one stone for a verse moved past with Next, given only if the verse
+  // was in front of the reader as long as it takes to read: about a second for
+  // every four words, never under 2 nor over 8 — the browsing card's own rule.
+  // Next is never held back here; a verse skipped past simply adds no stone.
+  function tReadMs(ref) {
+    var t = '';
+    try { t = BIBLE[ref[0]][1][ref[1]][ref[2]] || ''; } catch (e) {}
+    var words = String(t).split(/\s+/).filter(Boolean).length;
+    return Math.max(2, Math.min(8, Math.round(words / 4))) * 1000;
+  }
+  function tStoneForVerse(cur) {
+    if (!tOn() || !cur || !cur.at) return;
+    var now = Date.now();
+    if (tAwayRunning(now)) return;                       // 339
+    if (E.prayRunning(state)) return;                    // 344 — the prayer already carries it
+    if (now - cur.at < tReadMs(cur.ref)) return;
+    E.titheAdd(state, 'r', 5, now);
+    tPaintChip();                                        // 347 — the stone shows at once
+  }
+  // 345 — Next shows how many seconds are left before it earns a stone
+  // ("Next › 5"). It is never held back; at 0 the number goes, and that
+  // Next gives the stone. No number when no stone can come (Tithe off,
+  // away timer, 🙏 running, or the verse already counted).
+  var tNextT = null;
+  function tStoneWait(now) {
+    if (!tOn() || !current || current.counted || !current.at || view) return 0;   // a look back counts nothing
+    if (tAwayRunning(now) || E.prayRunning(state)) return 0;
+    return Math.max(0, tReadMs(current.ref) - (now - current.at));
+  }
+  function tPaintNext() {
+    var b = $('btnNext');
+    if (!b) return;
+    clearTimeout(tNextT); tNextT = null;
+    var left = tStoneWait(Date.now());
+    if (left > 0) {
+      var n = String(Math.ceil(left / 1000)), w = b.querySelector('.next-wait');
+      if (!w) {
+        b.textContent = 'Next › ';
+        w = document.createElement('span'); w.className = 'next-wait'; b.appendChild(w);
+      }
+      if (w.textContent !== n) w.textContent = n;
+      tNextT = setTimeout(tPaintNext, (left % 1000) || 1000);
+    } else if (b.textContent !== 'Next ›') b.textContent = 'Next ›';
+  }
+  function tFlush() {
+    tFlushAt = Date.now();
+    if (!tPending || !tOn()) { tPending = 0; return; }
+    var now = Date.now();
+    E.titheAddSpan(state, 'r', now - tPending, now);
+    tPending = 0;
+    save();
+    tPaintChip();
+  }
+  function tStillYes() {
+    $('stillOverlay').classList.remove('show'); tStillAt = 0; tTouch();
+  }
+  function tStillNo() {
+    $('stillOverlay').classList.remove('show'); tStillAt = 0;
+    tHeld = 0; tMedit = false; tMeditAt = 0; tPaintMedit(); tFlush();
+  }
+
+  // 278 — stay with one verse.
+  function tToggleMedit() {
+    tTouch();
+    tMedit = !tMedit;
+    tMeditAt = tMedit ? Date.now() : 0;
+    if (!tMedit) { tHeld = 0; tFlush(); }
+    tPaintMedit();
+  }
+  // 341 — while running, ⏳ counts up (0:01, 0:02…) so the time stayed is seen;
+  // the 🙏 timer at the other end of the row counts down.
+  function tPaintMedit() {
+    var b = $('btnMedit');
+    b.style.display = tOn() ? '' : 'none';
+    b.classList.toggle('medit-on', tMedit);
+    if (tMedit) {
+      var s = Math.max(0, Math.floor((Date.now() - (tMeditAt || Date.now())) / 1000));
+      var up = s >= 3600 ? Math.floor(s / 3600) + ':' + ('0' + Math.floor(s % 3600 / 60)).slice(-2) + ':' + ('0' + s % 60).slice(-2)
+                         : Math.floor(s / 60) + ':' + ('0' + s % 60).slice(-2);
+      b.textContent = '⏳ ' + up + ' · Stop';
+    } else b.textContent = '⏳';
+    b.title = tMedit ? 'Stop staying with this verse' : 'Stay with this verse — the time counts until you tap Stop';
+  }
+
+  // The 🙏 timer hands over what was prayed, when it ends or is stopped.
+  function tCreditPray(ranOut) {
+    if (!tOn() || !state.prayRun) return;
+    var r = state.prayRun, now = Date.now();
+    var total = (r.total || 0) * 1000;
+    var left = ranOut ? 0 : E.prayLeftMs(state, now);
+    var given = Math.max(0, total - left);
+    var end = ranOut && r.endsAt ? Math.min(now, r.endsAt) : now;
+    if (given > 0) E.titheAddSpan(state, 'p', end - given, end);
+  }
+
+  // ---------- Away timer ----------
+  function tAwayGo(secs) {
+    if (state.tithe.awayRun) return;
+    E.titheAwayStart(state, secs);
+    state.tithe.lastAway = state.tithe.awayRun.dur;
+    tAwayChimed = false;
+    save(); renderTithe();
+  }
+  function tAwayFinish(ranOut) {
+    E.titheAwayEnd(state);
+    if (ranOut) chime(true);
+    save(); tPaintChip();
+    if (tSheetOpen()) {
+      renderTithe();
+      if (ranOut) $('titheAwayAgain').style.display = '';
+    }
+  }
+
+  // ---------- The browsing card's inbox (add-on) ----------
+  function tFoldInbox() {
+    if (!IS_EXT || !XAPI || !XAPI.storage) return;
+    try {
+      var res = XAPI.storage.local.get(T_INBOX, function (o) { take(o); });
+      if (res && res.then) res.then(take);
+    } catch (e) {}
+    var done = false;
+    function take(o) {
+      if (done) return; done = true;
+      var items = o && o[T_INBOX];
+      if (!items || !items.length) return;
+      var clear = {}; clear[T_INBOX] = [];
+      XAPI.storage.local.set(clear);
+      if (E.titheFold(state, items)) { save(); tPaintChip(); if (tSheetOpen()) renderTithe(); }
+    }
+  }
+
+  // ---------- Painting ----------
+  function tPaintChip() {
+    var c = $('badgeTithe');
+    if (!tOn()) { c.style.display = 'none'; return; }
+    var d = E.titheToday(state), tgt = E.titheTarget(state);
+    var st = Math.floor(d.t / 5), ts = Math.max(1, Math.floor(tgt / 5));
+    c.style.display = '';
+    c.textContent = d.t >= tgt ? '⏳ ' + st + ' stone' + (st === 1 ? '' : 's') + ' ✓'
+                               : '⏳ ' + st + ' of ' + ts + ' stone' + (ts === 1 ? '' : 's');
+    c.classList.toggle('kept', d.t >= tgt);
+  }
+  function tDotWanted() {
+    if (!state.tithe) return false;
+    var t = state.tithe;
+    if (!t.asked) return true;                              // 327 — until yes or no
+    if (!t.on) return false;
+    if (t.offer || t.ck.due || t.resume) return true;
+    var tt = E.titheTitles(state);
+    return !!(tt.lastWeek && tt.lastWeek !== t.seen);       // 313 — a new title, found quietly
+  }
+  function tPaintLive() {
+    var d = E.titheToday(state), tgt = E.titheTarget(state);
+    var shownT = d.t + Math.floor(tPending / 1000);
+    $('titheStonesToday').textContent = E.titheStoneText(shownT);
+    $('titheTimeToday').textContent = E.titheTimeText(shownT);
+    var frac = Math.min(1, shownT / Math.max(1, tgt));
+    $('titheRingFg').style.strokeDashoffset = String(326.7 * (1 - frac));
+    document.querySelector('#titheSheet .tithe-ring').classList.toggle('kept', shownT >= tgt);
+    var n = $('titheNudge');
+    if (shownT < tgt) { n.textContent = 'One more stone.'; n.className = 'tithe-nudge'; }
+    else if (shownT > E.TITHE_FULL) { n.textContent = 'Tithe kept ✓ · Freewill offering: ' + E.titheTimeText(shownT - E.TITHE_FULL); n.className = 'tithe-nudge kept'; }
+    else { n.textContent = 'Tithe kept ✓'; n.className = 'tithe-nudge kept'; }
+    $('titheSplit').textContent = 'Reading ' + E.titheTimeText(d.r + Math.floor(tPending / 1000)) +
+      ' · Prayer ' + E.titheTimeText(d.p) + ' · Away ' + E.titheTimeText(d.a);
+    var run = state.tithe.awayRun;
+    $('titheAwayPick').style.display = run ? 'none' : '';
+    $('titheAwayLive').style.display = run ? '' : 'none';
+    if (run) {
+      var left = Math.ceil(E.titheAwayLeft(state) / 1000);
+      $('titheAwayLeft').textContent = fmt(left);
+      $('titheAwayAgain').style.display = 'none';
+    }
+  }
+  function tAsk(text, btns) {
+    $('titheAsk').style.display = '';
+    // Built from pieces, never from markup: a {b:'…'} piece is shown bold.
+    var tx = $('titheAskText'); tx.textContent = '';
+    [].concat(text).forEach(function (pc) {
+      if (pc && typeof pc === 'object') { var bb = document.createElement('b'); bb.textContent = pc.b; tx.appendChild(bb); }
+      else tx.appendChild(document.createTextNode(pc));
+    });
+    var box = $('titheAskBtns'); box.textContent = '';
+    btns.forEach(function (b) {
+      var el = document.createElement('button');
+      el.className = 'small-btn' + (b.gold ? ' gold' : '');
+      el.textContent = b.label;
+      el.onclick = function () { b.go(); save(); if (!b.stay) renderTithe(); updateDots(); tPaintChip(); };
+      box.appendChild(el);
+    });
+  }
+  /* v1.1.8 test sitting, F9 — coming back is not starting out. Somebody who
+     turned it off once sees what is kept, and "Carry on", not the words for a
+     first beginning. */
+  function tPaintWelcome() {
+    var t = state.tithe;
+    var back = !!(t.dd || (t.days && Object.keys(t.days).length) || (t.years && Object.keys(t.years).length));
+    $('titheIntroStart').style.display = back ? 'none' : '';
+    $('titheIntroBack').style.display = back ? '' : 'none';
+    if (back) {
+      var y = E.titheYear(state, E.todayStr().slice(0, 4));
+      var b = $('titheIntroBack'); b.textContent = '';
+      b.appendChild(document.createTextNode('Welcome back. Everything you have given is kept — '));
+      var k = document.createElement('b'); k.textContent = E.titheStoneText(y.t); b.appendChild(k);
+      b.appendChild(document.createTextNode(' this year — and your target is still '));
+      var g = document.createElement('b'); g.textContent = E.titheStoneText(t.target); b.appendChild(g);
+      b.appendChild(document.createTextNode('. Carry on from here.'));
+    }
+    $('titheBegin').textContent = back ? 'Carry on' : 'Begin with one stone';
+  }
+  function renderTithe() {
+    var t = state.tithe;
+    $('titheOffBox').style.display = t.on ? 'none' : '';
+    $('titheOnBox').style.display = t.on ? '' : 'none';
+    if (!t.on) { tPaintWelcome(); return; }
+    tPaintLive();
+    var tgt = E.titheTarget(state);
+    $('titheTargetText').textContent = E.titheStoneText(tgt);
+    $('titheTargetTime').textContent = '(' + E.titheTimeText(tgt) + ')';
+    var sn = $('titheSeasonNote');
+    if (t.season && t.season.until >= E.todayStr()) {
+      sn.style.display = '';
+      sn.textContent = 'A lighter season until ' + longDate(t.season.until) + ': one stone a day, and your target of ' +
+        E.titheStoneText(t.target) + ' waits for you.';
+    } else sn.style.display = 'none';
+
+    // One question at a time: the end of a season, the check-in, an offer.
+    $('titheAsk').style.display = 'none';
+    if (t.resume) {
+      tAsk('Your lighter season has come to its end. Ready to pick up where you were?', [
+        { label: 'Yes, carry on', gold: true, go: function () { E.titheResume(state, true); } },
+        { label: 'One more week', go: function () { E.titheResume(state, false); } }
+      ]);
+    } else if (t.ck.due) {
+      tAsk('Life may be pulling at you. What’s happening?', [
+        { label: 'Busy season', stay: true, go: function () { tSeasonPick('busy'); } },
+        { label: 'Unwell or resting', stay: true, go: function () { tSeasonPick('unwell'); } },
+        { label: 'I just drifted', go: function () {
+            E.titheCheckin(state, 'drift'); toastVerse('Draw nigh to God, and he will draw nigh to you. Start again today — one stone is enough.', 'James 4:8');
+          } },
+        { label: 'Skip', go: function () { E.titheCheckin(state, 'skip'); } }
+      ]);
+    } else if (t.offer) {
+      var o = t.offer;
+      if (o.k === 'up') {
+        tAsk(['This week you gave God about ', { b: E.titheTimeText(o.s, true) }, ' a day. Raise your daily tithe to that?'], [
+          { label: 'Yes', gold: true, go: function () { E.titheOfferAnswer(state, true); } },
+          { label: 'Not now', go: function () { E.titheOfferAnswer(state, false); } }
+        ]);
+      } else {
+        tAsk(['You showed up, week after week. That’s what matters. Set your daily tithe where you are — ',
+              { b: E.titheTimeText(o.s, true) }, ' — and grow from there?'], [
+          { label: 'Yes', gold: true, go: function () { E.titheOfferAnswer(state, true); } },
+          { label: 'No, keep my target', go: function () { E.titheOfferAnswer(state, false); } }
+        ]);
+      }
+    }
+
+    // The week.
+    var tt = E.titheTitles(state);
+    if (!tt.lastWeek) {
+      $('titheTitleNow').textContent = 'Your first title comes on Saturday at 6pm';
+      $('titheTitleNote').textContent = '';
+    } else {
+      $('titheTitleNow').textContent = tt.current ? tt.current.name : E.TITHE_WAITING;
+      var nx = E.titheNextTitle(tt.lastAvg);
+      $('titheTitleNote').textContent = 'Week to ' + longDate(tt.lastWeek) + ': about ' + E.titheTimeText(tt.lastAvg, true) + ' a day.' +
+        (nx ? ' ' + E.titheTimeText(nx.s - tt.lastAvg, true) + ' more a day to ' + nx.name + '.' : '');
+    }
+    $('titheTitleHigh').textContent = tt.highest ? 'Highest: ' + tt.highest.name : '';
+    var tl = $('titheTitleList'); tl.textContent = '';
+    E.TITHE_TITLES.slice().reverse().forEach(function (x) {
+      var n = tt.counts[x.id] || 0;
+      var row = tRow2(x.name, E.titheTimeText(x.s) + (n ? ' · ×' + n : ''), !n);
+      tl.appendChild(row);
+    });
+    t.seen = tt.lastWeek;
+
+    // The year.
+    var year = E.todayStr().slice(0, 4), y = E.titheYear(state, year);
+    $('titheBag').textContent = E.titheStoneText(y.t);
+    $('titheBagTime').textContent = E.titheTimeText(y.t) + ' with God in ' + year +
+      (y.free ? ' · freewill ' + E.titheTimeText(y.free) : '');
+    var yl = $('titheYears'); yl.textContent = '';
+    E.titheYearList(state).forEach(function (yy) {
+      if (yy === year) return;
+      var r = E.titheYear(state, yy), row = tRow2(yy, E.titheStoneText(r.t), false);
+      yl.appendChild(row);
+    });
+
+    // 325 — the mirror.
+    var d = E.titheToday(state);
+    $('titheMirror').textContent = d.ps ? 'Today you read ' + d.pv + ' of ' + d.ps + ' popup verse' + (d.ps === 1 ? '' : 's') + '.'
+                                        : 'No verse cards yet today.';
+
+    // Settings.
+    $('titheAuto').checked = !!t.auto;
+    $('titheAwayOn').checked = !!t.awayOn;
+    $('titheAwayBox').style.display = t.awayOn ? '' : 'none';
+    $('titheStoneBtn').checked = !!state.settings.stoneBtn;
+    $('titheOpenCard').checked = !!state.settings.openCard;
+    $('titheRemM').value = t.rem.m; $('titheRemN').value = t.rem.n;
+    $('titheRemOn').checked = !!t.rem.on;
+  }
+  function tRow2(left, right, dimLeft) {
+    var row = document.createElement('div'), a1 = document.createElement('span'), a2 = document.createElement('span');
+    a1.textContent = left; if (dimLeft) a1.className = 'dim';
+    a2.textContent = right; a2.className = 'dim';
+    row.appendChild(a1); row.appendChild(a2);
+    return row;
+  }
+  function tSeasonPick(why) {
+    tAsk('How long a lighter season? One stone a day, and nothing you have built is lost.', [
+      { label: '1 week', go: function () { E.titheCheckin(state, why, 1); } },
+      { label: '2 weeks', go: function () { E.titheCheckin(state, why, 2); } }
+    ]);
+  }
+  function openTithe() {
+    closeMenu();
+    tFlush();
+    renderTithe();
+    $('titheSheet').classList.add('show');
+    save(); updateDots();
+  }
+
+  // ---------- Reminders (329) ----------
+  function tRemSync() {
+    if (!IS_EXT || !XAPI || !XAPI.runtime) return;
+    try { XAPI.runtime.sendMessage({ type: 'dnRemind' }); } catch (e) {}
+  }
+  function tRemToggle(on) {
+    var t = state.tithe;
+    if (!on) { t.rem.on = false; save(); tRemSync(); $('titheRemNote').textContent = ''; return; }
+    if (!XAPI || !XAPI.permissions || !XAPI.permissions.request) {
+      $('titheRemOn').checked = false;
+      $('titheRemNote').textContent = 'This Firefox cannot show reminders. The calendar button below works instead.';
+      return;
+    }
+    var ask;
+    try { ask = XAPI.permissions.request({ permissions: ['notifications'] }); } catch (e) { ask = null; }
+    Promise.resolve(ask).then(function (granted) {
+      if (!granted) {
+        $('titheRemOn').checked = false;
+        $('titheRemNote').textContent = 'Firefox was not allowed to show reminders. The calendar button below works instead.';
+        return;
+      }
+      t.rem.on = true; save(); tRemSync();
+      $('titheRemNote').textContent = 'Reminders on at ' + t.rem.m + ' and ' + t.rem.n + ', while Firefox is running.';
+    }, function () {
+      $('titheRemOn').checked = false;
+      $('titheRemNote').textContent = 'This Firefox cannot show reminders. The calendar button below works instead.';
+    });
+  }
+  // A calendar file with two daily reminders. The phone's own calendar keeps
+  // them; DrawNigh never hears of them again.
+  function tCalendar() {
+    var t = state.tithe;
+    function stamp(hm) {
+      var d = new Date(), p = hm.split(':');
+      d.setHours(+p[0], +p[1], 0, 0);
+      return d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0') +
+        'T' + String(d.getHours()).padStart(2, '0') + String(d.getMinutes()).padStart(2, '0') + '00';
+    }
+    function ev(id, hm, title) {
+      return ['BEGIN:VEVENT', 'UID:drawnigh-tithe-' + id + '@counselofgod.org', 'DTSTAMP:' + stamp('00:00'),
+        'DTSTART:' + stamp(hm), 'DURATION:PT15M', 'RRULE:FREQ=DAILY', 'SUMMARY:' + title,
+        'DESCRIPTION:Tithe of the Day — one more stone.',
+        'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + title, 'TRIGGER:PT0M', 'END:VALARM', 'END:VEVENT'].join('\r\n');
+    }
+    var ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Counsel of God International Outreach//DrawNigh//EN',
+      ev('morning', t.rem.m, 'Morning with God'), ev('night', t.rem.n, 'Night with God'), 'END:VCALENDAR'].join('\r\n');
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar' }));
+    a.download = 'DrawNigh-reminders.ics';
+    document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+  }
+
+  function wireTithe() {
+    ['pointerdown', 'keydown', 'wheel', 'touchmove', 'scroll'].forEach(function (ev) {
+      document.addEventListener(ev, tTouch, { capture: true, passive: true });
+    });
+    $('badgeTithe').onclick = openTithe;
+    $('miTithe').onclick = openTithe;
+    $('titheClose').onclick = function () { $('titheSheet').classList.remove('show'); updateDots(); };
+    $('titheBegin').onclick = function () {
+      E.titheTurnOn(state); save(); renderTithe(); tPaintChip(); tPaintMedit(); updateDots();
+    };
+    $('titheNotNow').onclick = function () {
+      state.tithe.asked = true; save(); updateDots();
+      $('titheSheet').classList.remove('show');
+    };
+    $('titheOff').onclick = function () {
+      tFlush(); state.tithe.on = false; save(); renderTithe(); tPaintChip(); tMedit = false; tMeditAt = 0; tPaintMedit(); updateDots();
+    };
+    $('btnMedit').onclick = function (e) { e.stopPropagation(); tToggleMedit(); };
+    $('stillYes').onclick = tStillYes;
+    $('stillNo').onclick = tStillNo;
+    Array.prototype.forEach.call(document.querySelectorAll('[data-away]'), function (b) {
+      b.onclick = function () { tAwayGo(parseInt(b.dataset.away, 10)); };
+    });
+    $('titheAwayOwnGo').onclick = function () {
+      var m = parseInt($('titheAwayOwn').value, 10);
+      if (!(m >= 1)) return;
+      tAwayGo(Math.min(60, m) * 60);
+    };
+    $('titheAwayStop').onclick = function () { tAwayFinish(false); };
+    $('titheAwayRound').onclick = function () {
+      var last = state.tithe.lastAway || 900;
+      tAwayGo(last);
+    };
+    $('titheAuto').onchange = function (e) { state.tithe.auto = !!e.target.checked; save(); };
+    $('titheAwayOn').onchange = function (e) { state.tithe.awayOn = !!e.target.checked; save(); renderTithe(); };
+    $('titheStoneBtn').onchange = function (e) { state.settings.stoneBtn = !!e.target.checked; save(); };
+    $('titheOpenCard').onchange = function (e) { state.settings.openCard = !!e.target.checked; save(); };
+    $('titheRemM').onchange = function (e) { state.tithe.rem.m = e.target.value || '06:30'; save(); tRemSync(); };
+    $('titheRemN').onchange = function (e) { state.tithe.rem.n = e.target.value || '21:30'; save(); tRemSync(); };
+    $('titheRemOn').onchange = function (e) { tRemToggle(!!e.target.checked); };
+    $('titheCal').onclick = tCalendar;
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) { tFlush(); return; }
+      tLastTick = Date.now();
+      if (state) { E.rollover(state); tFoldInbox(); tPaintChip(); updateDots(); }
+    });
+    if (IS_EXT && XAPI && XAPI.storage && XAPI.storage.onChanged) {
+      XAPI.storage.onChanged.addListener(function (ch) {
+        // Only a tab somebody is looking at folds the card's inbox in. A tab
+        // left open in the background used to fold it and then write its own
+        // older copy of the reading over everything else (F8, F13).
+        if (ch[T_INBOX] && ch[T_INBOX].newValue && ch[T_INBOX].newValue.length && !document.hidden) tFoldInbox();
+        if (ch[E.KEY] && ch[E.KEY].newValue) takeOutside(ch[E.KEY].newValue);
+      });
+    } else {
+      // The website: another tab of DrawNigh writing the same reading.
+      window.addEventListener('storage', function (ev) {
+        if (ev.key !== E.KEY || !ev.newValue) return;
+        try { takeOutside(JSON.parse(ev.newValue)); } catch (e) {}
+      });
+    }
+    window.addEventListener('pagehide', tFlush);
+  }
+  /* v1.1.8 test sitting, F8 and F13 — one reading, many writers.
+     The browsing card, the toolbar popup and a second DrawNigh tab all write
+     the same stored reading. This tab used to keep its own copy in memory and
+     write it back over theirs at its next save: the card's verses fell back
+     (the card kept returning to the same verse), and seconds already given
+     were taken away. Now a write that did not come from this tab is taken up
+     here, at once, so this tab never writes an older copy over a newer one. */
+  var ownW = {};
+  (function () {
+    var plain = E.saveState;
+    E.saveState = function (st) {
+      var out = plain.apply(E, arguments);
+      if (st && st._w) {
+        ownW[st._w] = Date.now();
+        var cut = Date.now() - 600000;
+        for (var k in ownW) if (ownW[k] < cut) delete ownW[k];
+      }
+      return out;
+    };
+  })();
+  function takeOutside(fresh) {
+    if (!state || !fresh || typeof fresh !== 'object') return;
+    if (fresh._w && (ownW[fresh._w] || fresh._w === state._w)) return;   // our own write coming back
+    fresh = JSON.parse(JSON.stringify(fresh));
+    // The room: its letters live only in this tab's memory while it is open.
+    // If nobody else changed them, they stay exactly as they are here. If
+    // another tab did, this tab's open copy is shut so it cannot write over them.
+    var mine = state.room;
+    if (mine && fresh.room && roomKey && mine.entries !== undefined) {
+      if ((fresh.room.rev || 0) === (mine.rev || 0) && fresh.room.vault === mine.vault) fresh.room = mine;
+      else { roomForget(); roomOpen = false; $('roomSheet').classList.remove('show'); }
+    } else if (mine && !fresh.room && roomKey) {
+      fresh.room = mine;
+    }
+    E.rollover(fresh);
+    state = fresh;
+    E.titheMigrate(state);
+    try { lwSnap = E.lwwTrack(lwSnap, state); } catch (e) {}
+    // The verse on screen: if the card has read past it, show where the
+    // reading now stands. Nothing is counted by this.
+    if (!view && current && !current.counted) {
+      var moved = false, r0 = current.ref;
+      if (mode === 'plan') {
+        var plan = state.activePlanId ? E.getPlan(state, state.activePlanId) : null;
+        var gi = plan ? E.planNextIndex(plan) : -1;
+        var nx = gi >= 0 ? E.indexToRef(gi) : null;
+        moved = !nx || nx[0] !== r0[0] || nx[1] !== r0[1] || nx[2] !== r0[2];
+      } else if (mode === 'book') {
+        var p = E.bookPosition(state, currentBook);
+        moved = r0[0] === currentBook && (p[0] !== r0[1] || p[1] !== r0[2]);
+      }
+      if (moved) { current = null; serveNext(); }
+    }
+    renderBadges();
+    tPaintChip();
+    if (tSheetOpen()) renderTithe();
+    if ($('badgeSheet').classList.contains('show')) { renderBadgeSheet(); if (bShown != null) showBookCard(bShown); }
+    updateDots();
+  }
+  function bootTithe() {
+    E.titheMigrate(state);
+    // A timer that ran out while DrawNigh was closed is settled now, quietly.
+    if (state.tithe.awayRun && E.titheAwayLeft(state) <= 0) { E.titheAwayEnd(state); save(); }
+    tFoldInbox();
+    tPaintChip(); tPaintMedit();
+    tTickT = setInterval(tTick, 1000);
   }
 
   function wire() {
@@ -6273,10 +6840,12 @@
     E.loadState(function (st) {
       state = st; save(); // persist rollover
       wire();
+      wireTithe();              // v1.1.8
       paintVersion();
       setPills();
       renderBadges();
       prayVisible();            // v1.0.4
+      bootTithe();              // v1.1.8 — before a prayer resolves, so it is counted
       resumePrayOnLoad();       // v1.0.9 — Decision 51: a prayer survives being closed
       E.recordMilestones(state);// v1.0.9 — and dates anything reached while away
       updateDots();             // v1.0.4

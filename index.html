@@ -30,6 +30,8 @@
     <span class="badge" id="badgePlan" style="display:none">🎯 0 / 0</span>
     <span class="badge" id="badgeCount">📖 0 verses today</span>
     <span class="badge" id="badgeStreak">🔥 0-day streak</span>
+    <!-- v1.1.8 — Tithe of the Day: today, in stones. Opens its screen. -->
+    <span class="badge" id="badgeTithe" style="display:none" title="Tithe of the Day">⏳</span>
   </div>
 
   <main>
@@ -66,6 +68,14 @@
                sits beside the reference and not among the navigation buttons. -->
           <div class="pray-slot" id="praySlot" style="display:none">
             <button class="pray-btn" id="btnPray" title="Pray">🙏 Pray</button>
+            <!-- v1.1.8 test sitting, F6 / Decision 340 — the running prayer keeps
+                 🙏's place at the left end, wearing 🙏, so it is never mistaken
+                 for ⏳ at the right end. -->
+            <span class="pray-live" id="prayLive" style="display:none"><span class="pray-mark" aria-hidden="true">🙏</span>
+              <button class="pray-left" id="prayLeft" title="Tap to pause">5:00</button>
+              <button class="pray-stretch" id="btnPrayStretch">+5</button>
+              <button class="pray-cancel" id="btnPrayCancel" title="End this prayer">✕</button>
+            </span>
             <!-- v1.1.0 (v18): the voice already in the phone. Nothing is
                  downloaded and nothing is sent. A verse heard is a verse read. -->
             <button class="pray-btn listen-btn" id="btnListen" title="Read aloud" style="display:none">▶</button>
@@ -73,11 +83,9 @@
                  gesture — a tap already moves on, a double tap misfires into
                  two taps, and a long press already holds the screen awake. -->
             <button class="pray-btn cmp-btn" id="btnCompare" title="Show both translations">⇅</button>
-            <span class="pray-live" id="prayLive" style="display:none">
-              <button class="pray-left" id="prayLeft" title="Tap to pause">5:00</button>
-              <button class="pray-stretch" id="btnPrayStretch">+5</button>
-              <button class="pray-cancel" id="btnPrayCancel" title="End this prayer">✕</button>
-            </span>
+            <!-- v1.1.8 (278, 338, 341) — stay with one verse: the time counts up
+                 until Stop. Kept at the right end, apart from 🙏 (340). -->
+            <button class="pray-btn" id="btnMedit" title="Stay with this verse — the time counts until you tap Stop" style="display:none">⏳</button>
           </div>
         </div>
         <div class="verse-text" id="verseText"></div>
@@ -612,6 +620,8 @@
 
     <!-- v16.1 §3.3 — called Seasons, not Archive: an item called Archive would
          suggest the current season lives somewhere else, and it does not. -->
+    <button class="menu-item" id="miTithe">⏳ Tithe of the Day<span class="waiting-dot" id="titheDot" style="display:none"></span></button>
+
     <button class="menu-item" id="miSeasons">🌱 Seasons</button>
 
     <button class="menu-item quiet" id="miClose">Close</button>
@@ -640,6 +650,155 @@
       <div class="badge-title">Former seasons</div>
       <div class="note">Kept in order, dated. Nothing here is ever deleted.</div>
       <div id="seasonPast"></div>
+    </div>
+  </div>
+</div>
+
+<!-- v1.1.8 — Tithe of the Day (Decisions 274–331). Its own screen, opened from
+     the ⋮ menu, so the badges screen keeps its rule of no progress bars
+     (Decisions 88/89 stand; 306). The same words head it. -->
+<div class="sheet" id="titheSheet">
+  <div class="sheet-panel wide">
+    <div class="badge-head">
+      <div><b>Tithe of the Day</b><div class="note">A tenth of the day, given to God in private.</div></div>
+      <button class="small-btn" id="titheClose">Close</button>
+    </div>
+    <div class="tithe-motto">PRESENCE OVER PERFORMANCE</div>
+
+    <!-- Off: the quiet invitation (327). -->
+    <div id="titheOffBox" style="display:none">
+      <div class="setting">
+        <p>A day has <b>86,400 seconds</b>. A tenth of it is <b>8,640</b> — two hours and twenty-four minutes. That is the tithe of the day, and the goal is the same for everyone.</p>
+        <p style="margin-top:6px" id="titheIntroStart">Nobody starts there. You start at <b>5 seconds</b> — one smooth stone — and every day you keep it, tomorrow asks one stone more.</p>
+        <p id="titheIntroBack" style="margin-top:6px;display:none"></p>
+        <p style="margin-top:6px">Each verse you read here and move past with Next is <b>one stone</b>. Time staying with a verse (⏳), time in prayer (🙏), and time with God away from the phone are counted to the second. Church and meetings are not counted: this is <b>private time with God</b>.</p>
+        <p style="margin-top:6px">Every <b>5 seconds is a stone</b>. Twelve stones make a rock, sixty rocks a boulder, twenty-four boulders a hill. Each Saturday at 6pm your week earns a title from David's journey, from Shepherd Boy to King.</p>
+        <div class="plan-actions" style="margin-top:12px">
+          <button class="small-btn gold" id="titheBegin">Begin with one stone</button>
+          <button class="small-btn" id="titheNotNow">Not now</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="titheOnBox" style="display:none">
+      <!-- Today. -->
+      <div class="tithe-today">
+        <svg class="tithe-ring" viewBox="0 0 120 120" aria-hidden="true">
+          <circle class="tr-bg" cx="60" cy="60" r="52"></circle>
+          <circle class="tr-fg" id="titheRingFg" cx="60" cy="60" r="52"></circle>
+        </svg>
+        <div class="tithe-today-text">
+          <div class="note">TODAY</div>
+          <div class="tithe-big" id="titheStonesToday">0 Stones</div>
+          <div class="note" id="titheTimeToday">0 sec</div>
+        </div>
+      </div>
+      <div class="tithe-nudge" id="titheNudge">One more stone.</div>
+      <div class="note tithe-lines">Today's target: <b id="titheTargetText"></b> <span id="titheTargetTime"></span></div>
+      <div class="note tithe-lines">Goal for everyone: <b>2 Boulders · 24 Rocks</b> (2 hr 24 min)</div>
+      <div class="note tithe-lines" id="titheSplit"></div>
+      <div class="note tithe-lines" id="titheSeasonNote" style="display:none"></div>
+
+      <!-- An offer, the check-in, or the end of a season: one at a time. -->
+      <div class="setting tithe-ask" id="titheAsk" style="display:none">
+        <p id="titheAskText"></p>
+        <div class="plan-actions" id="titheAskBtns"></div>
+      </div>
+
+      <!-- Away from the phone (280–282). -->
+      <div class="setting" id="titheAwayBox">
+        <div class="row"><b>With God, away from the phone</b></div>
+        <p>A paper Bible, or prayer with the phone set down. Choose a length; it stops by itself with a soft chime, and only the time to the chime counts.</p>
+        <div class="plan-actions" id="titheAwayPick">
+          <button class="small-btn" data-away="900">15 min</button>
+          <button class="small-btn" data-away="1800">30 min</button>
+          <button class="small-btn" data-away="3600">1 hour</button>
+          <input type="number" id="titheAwayOwn" min="1" max="60" placeholder="min">
+          <button class="small-btn" id="titheAwayOwnGo">Start</button>
+        </div>
+        <div class="plan-actions" id="titheAwayLive" style="display:none">
+          <span class="tithe-big" id="titheAwayLeft">15:00</span>
+          <button class="small-btn" id="titheAwayStop">Stop</button>
+        </div>
+        <div class="plan-actions" id="titheAwayAgain" style="display:none">
+          <button class="small-btn gold" id="titheAwayRound">Another round</button>
+        </div>
+      </div>
+
+      <!-- The week (302–305). -->
+      <div class="badge-block">
+        <div class="badge-title">This week's title</div>
+        <div class="tithe-big" id="titheTitleNow">—</div>
+        <div class="note" id="titheTitleNote"></div>
+        <div class="note" id="titheTitleHigh"></div>
+        <div id="titheTitleList" class="tithe-list"></div>
+      </div>
+
+      <!-- The year's bag (301). -->
+      <div class="badge-block">
+        <div class="badge-title">Your bag this year</div>
+        <div class="tithe-big" id="titheBag">0 Stones</div>
+        <div class="note" id="titheBagTime"></div>
+        <div id="titheYears" class="tithe-list"></div>
+      </div>
+
+      <!-- 325 — the mirror. Add-on only: the website has no browsing card. -->
+      <div class="badge-block ext-only" id="titheMirrorBox">
+        <div class="badge-title">The browsing card</div>
+        <div class="note" id="titheMirror"></div>
+      </div>
+
+      <div class="badge-block">
+        <div class="badge-title">Settings</div>
+        <div class="setting">
+          <div class="row"><b>Raise my target by itself</b>
+            <label class="toggle"><input type="checkbox" id="titheAuto"></label></div>
+          <p>Off: when a week's average is well above your target, you are asked first. On: it rises to your average on Saturday without asking.</p>
+        </div>
+        <div class="setting">
+          <div class="row"><b>Time away from the phone</b>
+            <label class="toggle"><input type="checkbox" id="titheAwayOn"></label></div>
+          <p>Off: only reading and prayer inside DrawNigh count.</p>
+        </div>
+        <div class="setting ext-only">
+          <div class="row"><b>"One more stone" on the browsing card</b>
+            <label class="toggle"><input type="checkbox" id="titheStoneBtn"></label></div>
+          <p>Adds a button to the verse card: five seconds of prayer, with the page covered and the verse still there to read. "Pray longer" gives 1, 2, 5 or 30 minutes, or an hour; while you pray, ↻ adds the same length again.</p>
+        </div>
+        <div class="setting ext-only">
+          <div class="row"><b>A verse card when Firefox opens</b>
+            <label class="toggle"><input type="checkbox" id="titheOpenCard"></label></div>
+          <p>The first page you open after Firefox starts shows the verse card straight away. On a phone, Firefox often carries on from where it was rather than starting again, so this may show less often than you open it.</p>
+        </div>
+        <div class="setting">
+          <div class="row"><b>Morning and night reminders</b></div>
+          <div class="row" style="margin-top:6px"><span>Morning</span><input type="time" id="titheRemM"></div>
+          <div class="row"><span>Night</span><input type="time" id="titheRemN"></div>
+          <div class="ext-only">
+            <div class="row" style="margin-top:6px"><span>Remind me from Firefox</span>
+              <label class="toggle"><input type="checkbox" id="titheRemOn"></label></div>
+            <p class="note" id="titheRemNote"></p>
+          </div>
+          <p style="margin-top:6px">Or put both reminders in your phone's own calendar, where you can change or delete them any time. Nothing is sent anywhere.</p>
+          <div class="plan-actions"><button class="small-btn" id="titheCal">Add reminders to my calendar</button></div>
+        </div>
+        <div class="setting">
+          <div class="plan-actions"><button class="small-btn" id="titheOff">Turn Tithe of the Day off</button></div>
+          <p>Everything you have given is kept. Turning it on again carries on from here.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- v1.1.8 (279) — the meditation start, forgotten. -->
+<div class="overlay" id="stillOverlay">
+  <div class="card">
+    <h3>Still with the Word?</h3>
+    <div class="note">Nothing has been touched for half an hour. If you are still here, say so and it carries on counting. If nobody answers, it stops and keeps the time up to your last touch.</div>
+    <div class="actions">
+      <button class="nav-btn next" id="stillYes">Yes, still here</button>
+      <button class="nav-btn" id="stillNo">Stop</button>
     </div>
   </div>
 </div>

@@ -270,6 +270,7 @@ h2:first-child { margin-top: 4px; }
   border: 1px solid var(--ink-line); background: var(--ink-raised); color: var(--parchment);
 }
 .nav-btn.next { border-color: var(--gold); color: var(--gold-bright); background: rgba(200,162,74,.1); }
+.nav-btn.next .next-wait { opacity: .55; font-size: .85em; margin-left: 2px; }  /* 345 */
 .nav-btn:disabled { opacity: .35; }
 .heart-btn { font-size: 1.5rem; padding: 8px 12px; color: var(--parchment-dim); }
 .heart-btn.on { color: var(--ember); }
@@ -690,3 +691,36 @@ nav button.on { color: var(--gold-bright); }
 /* Decision 257, F8 — the writing box uses the title box's own font. */
 #roomBox { font-family: var(--serif); font-size: 1.02rem; line-height: 1.55; }
 #roomBox::placeholder, .room-title::placeholder { color: var(--parchment-dim); opacity: .8; }
+
+/* ---------- v1.1.8 — Tithe of the Day ---------- */
+.is-web .ext-only { display: none !important; }
+.tithe-motto { text-align: center; font-size: .72rem; letter-spacing: .22em; color: var(--gold); margin: 16px 0 12px; }
+.tithe-today { display: flex; align-items: center; gap: 16px; }
+.tithe-ring { width: 104px; height: 104px; flex: 0 0 104px; transform: rotate(-90deg); }
+.tithe-ring circle { fill: none; stroke-width: 9; }
+.tithe-ring .tr-bg { stroke: var(--ink-line); }
+.tithe-ring .tr-fg { stroke: var(--gold); stroke-linecap: round; stroke-dasharray: 326.7; stroke-dashoffset: 326.7; transition: stroke-dashoffset .5s ease; }
+.tithe-ring.kept .tr-fg { stroke: var(--gold-bright); }
+.tithe-big { font-size: 1.25rem; color: var(--gold-bright); }
+.tithe-nudge { text-align: center; font-style: italic; color: var(--gold-bright); margin: 12px 0 6px; font-size: 1.08rem; }
+.tithe-nudge.kept { font-style: normal; color: #9fd29a; }
+.tithe-lines { margin-top: 3px; }
+.tithe-ask { border-color: var(--gold) !important; }
+.tithe-list > div { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0; border-bottom: 1px dashed var(--ink-line); font-size: .92rem; }
+.tithe-list > div .dim { color: var(--parchment-dim); }
+#badgeTithe { cursor: pointer; }
+#badgeTithe.kept { border-color: var(--gold); color: var(--gold-bright); }
+.pray-btn.medit-on { background: var(--gold); color: #1a1408; border-color: var(--gold); }
+#titheAwayPick input, .setting input[type=time] { background: var(--ink-raised); color: var(--parchment); border: 1px solid var(--ink-line); border-radius: 8px; padding: 6px 8px; font: inherit; }
+
+/* ---------- v1.1.8 test sitting (9 Nov 2026) ---------- */
+/* F1 — the own-minutes box had "min" squeezed against its arrows. */
+#titheAwayOwn { width: 92px; text-align: center; box-sizing: border-box; }
+/* F2 — the ring and "TODAY" showed above the head when scrolled. Firefox
+   sticks the head below the panel's top padding, leaving a strip for the
+   content to slide through. This sheet starts its panel at the very top
+   instead, so the head sits flush and covers everything beneath it. */
+#titheSheet .sheet-panel { padding-top: 0; }
+#titheSheet .sheet-panel > .badge-head { margin-top: 0; padding-top: 16px; }
+/* F6 — the running prayer wears 🙏. */
+.pray-mark { font-size: .95rem; line-height: 1; }
